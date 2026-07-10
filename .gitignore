@@ -18,3 +18,7 @@ board/
 exports/
 projects.json
 projects.json.tmp-*
+
+# Per-machine agent settings (local permission allowlists — not shared)
+**/settings.local.json
+import-source/
