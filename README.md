@@ -1,71 +1,146 @@
 # AiDailyTaks
 
-A **local, localhost-only** task tracker (Monday/Jira-style) for refactor/bug/feature work, co-managed by a human and an AI agent. Task data is plain Markdown + YAML frontmatter — one folder per task — so the agent edits tasks with plain file tools while the human uses the web UI, and both stay in sync live. It's a lightweight way to give an AI coding agent shared, persistent context for the work you're doing together.
+**A local, file-based task board that a human and an AI agent manage together — one Markdown file per task, edited live from both sides.**
+
+---
+
+## Why this exists
+
+This started in the middle of a long refactor of a legacy codebase. The work was dozens of
+interrelated things — code-smell fixes, bugs, small architectural changes — and I was tracking it
+in one sprawling Markdown file, propped up by a litter of `SCOPE-*` and `DRAFT-*` notes that kept
+getting committed *inside the very repo I was trying to clean up.*
+
+Two problems compounded:
+
+1. **The notes polluted the codebase.** Planning docs and back-and-forth between me and the AI
+   agent don't belong in a shared source repo, but that's where they kept landing because there was
+   nowhere better to put them.
+2. **The agent had no memory of the plan.** Every session with the AI coding agent started from a
+   blank slate. It couldn't *see* the board, so I was re-pasting status, priorities, and history by
+   hand — and the moment the conversation ended, that context evaporated.
+
+I wanted a single place — **outside** the code repo — that both of us could treat as the source of
+truth: something I could glance at in a browser like a normal Kanban board, and something the agent
+could read and update *directly*, without an API dance or losing context between sessions.
+
+## The idea
+
+The whole design falls out of one decision: **the files are the database.**
+
+Each task is a folder with a `task.md` (YAML frontmatter + a Markdown body) and an optional
+`files/` directory for attachments. That single choice buys almost everything:
+
+- **The human** gets a live web UI — a drag-and-drop board, filters, a dependency graph, stats.
+- **The agent** doesn't need an integration. It reads and writes plain Markdown with the same file
+  tools it already has. A file watcher pushes those edits to the browser instantly, so you *watch*
+  the agent move cards and log notes in real time.
+- **Nothing is locked in.** The board is also a valid [Obsidian](https://obsidian.md) vault. Your
+  data is greppable, diffable, and portable — no proprietary format, no cloud, no account.
+- **It stays private.** Task and project data are git-ignored by default; only the code and a small
+  vocabulary template are ever committed.
+
+The result is shared, durable, structured context for human + agent work — the thing that was
+missing when all I had was a chat window and a giant text file.
+
+## What you get
+
+- **Board** — drag-and-drop Kanban across your workflow states (Backlog · Not started · Scoped · In
+  progress · Completed), with an auto-archiving Completed column so it never sprawls.
+- **Table, Backlog, Archive** views — sortable table, a parked-work backlog, and restorable archive.
+- **Dependency graph** — tasks link via `depends_on` / `blocks` / `relates_to` / `parent`, rendered
+  as an auto-laid-out graph so you can see the shape of the work.
+- **Stats** — cycle time, throughput, and how long things sit open.
+- **Rich task detail** — Markdown summary + scope, a timestamped observations log, and attachments
+  (paste a screenshot straight into a note and it's saved and embedded).
+- **Filters, search, projects, and one-click Markdown export.**
+- **Live sync** via server-sent events, with optimistic concurrency + atomic writes so the UI and
+  the agent can edit the same task without clobbering each other.
 
 ## Quick start
 
 ```bash
 npm install            # once, from the repo root (npm workspaces)
-npm run import:dry     # optional: preview importing tasks from a markdown audit doc
-npm run import         # optional: generate board/ from that doc (idempotent) — see CLAUDE.md
-npm run dev            # server :4317 + Vite UI :5173
+npm run dev            # server on :4317 + Vite UI on :5173
 ```
 
-For daily use without the dev server:
+Open **http://localhost:5173**, create a task, and you're running. For daily use without the dev
+server:
 
 ```bash
-npm run build          # builds the web UI
-npm start              # serves UI + API together on http://localhost:4317
+npm run build          # build the web UI
+npm start              # serve UI + API together on http://localhost:4317
 ```
 
-## Layout
+Optionally, seed a board from an existing Markdown doc (a status table + per-task sections):
+
+```bash
+npm run import:dry     # preview the plan — writes nothing
+npm run import -- --source path/to/your-doc.md
+```
+
+The importer is idempotent and never modifies your source file. A fresh board works fine without it.
+
+## How it's laid out
 
 ```
-board/<ID>/task.md     a task (frontmatter + markdown body)              [git-ignored — private]
-board/<ID>/files/      that task's attachments                            [git-ignored — private]
-board/_meta/           overview / relationships / runtime-evidence / …    [git-ignored — private]
-exports/               generated markdown exports                         [git-ignored — private]
-projects.json          the project list ({id,label}) — add via the UI     [git-ignored — private]
-board.config.json      enum vocabulary (statuses, categories, severities) — tracked template
-app/shared/            zod contract + TS types (used by server AND web)
-app/server/            Fastify + TypeScript backend (+ the audit importer)
+board/<ID>/task.md     a task: YAML frontmatter + Markdown body            [git-ignored — private]
+board/<ID>/files/      that task's attachments (logs, screenshots, docs)   [git-ignored — private]
+board/_meta/           overview / relationships / import report            [git-ignored — private]
+exports/               generated Markdown exports                          [git-ignored — private]
+projects.json          your project list ({id,label}) — add via the UI     [git-ignored — private]
+board.config.json      the vocabulary (statuses, categories, colors) — tracked template
+app/shared/            zod contract + shared TypeScript types (server + web)
+app/server/            Fastify + TypeScript API, file watcher, MCP server, importer
 app/web/               React + Vite + TypeScript frontend
 ```
 
-**This is a localhost-only tool and your task data is private.** `board/`, `exports/`, and `projects.json`
-are git-ignored so nothing you track ever lands in git; only the code and the `board.config.json`
-vocabulary template are version-controlled.
+> **Your data is private by default.** `board/`, `exports/`, and `projects.json` are git-ignored, so
+> nothing you track ever lands in git — only the code and the `board.config.json` vocabulary
+> template are version-controlled.
 
-## Connect an agent (MCP)
+## Connect any AI agent (MCP)
 
-AiDailyTaks is also an **MCP server**, so an AI agent can read/create/update tasks, manage
-projects, and inspect the graph through tools (`list_tasks`, `get_task`, `create_task`,
-`update_task`, `add_observation`, `archive_task`/`unarchive_task`, `list_projects`,
-`add_project`, `get_config`, `get_graph`). Both transports expose the same tools.
+AiDailyTaks is also an **MCP server**, so an agent gets structured tools — `list_tasks`, `get_task`,
+`create_task`, `update_task`, `add_observation`, `archive_task` / `unarchive_task`, `list_projects`,
+`add_project`, `get_config`, `get_graph` — over either transport.
 
-> **In-app helper:** open the **Connect** tab in the UI for copy-paste configs (HTTP + stdio)
-> and the live tool list — the URL/paths are filled in from the running server.
+Because it's built on the open [Model Context Protocol](https://modelcontextprotocol.io) **and** on
+plain files, it isn't tied to any one assistant: MCP-capable agents (Claude, and other MCP clients)
+can use the tools, while *any* file-editing agent can drive the board just by reading and writing
+the `board/` Markdown directly.
 
-**Option A — over HTTP (on the running server).** The MCP endpoint comes up automatically with
-`npm run dev` (and `npm start`). Point any Streamable-HTTP MCP client at:
+> **In-app helper:** open the **Connect** tab in the UI for copy-paste configs (HTTP + stdio) and
+> the live tool list, filled in from the running server.
+
+**Option A — HTTP (server already running).** Comes up automatically with `npm run dev` / `npm start`.
+Point any Streamable-HTTP MCP client at:
 
 ```
 http://127.0.0.1:4317/mcp
 ```
 
-**Option B — stdio (spawn it locally, no HTTP server needed).** The agent runs the process
-and talks over stdin/stdout. Example client config (e.g. `claude_desktop_config.json` or a
-`.mcp.json`):
+**Option B — stdio (the agent spawns it, no HTTP server needed).** Example client config
+(`.mcp.json`, `claude_desktop_config.json`, or equivalent):
 
 ```jsonc
 {
   "mcpServers": {
-    "AiDailyTaks": { "command": "npm", "args": ["run", "mcp"], "cwd": "C:/Code/AiDailyTaks" }
+    "AiDailyTaks": { "command": "npm", "args": ["run", "mcp"], "cwd": "/absolute/path/to/AiDailyTaks" }
   }
 }
 ```
 
-Or run it directly: `npm run mcp`. Both paths edit the same `board/` files with the same
+Or run it directly with `npm run mcp`. Either path edits the same `board/` files with the same
 optimistic-concurrency + atomic writes as the web UI, so the browser updates live.
 
-See [CLAUDE.md](CLAUDE.md) for the working conventions (most importantly: **new scope docs are created here as tasks, not scattered across the codebase you're working on**).
+## Working conventions
+
+See [CLAUDE.md](CLAUDE.md) for how the agent is expected to work with the board — the frontmatter
+schema, how to keep relationships consistent, and the guiding rule: **scope and tracking notes are
+created here as tasks, not scattered across the codebase you're working on.**
+
+## Tech
+
+TypeScript end to end — React + Vite (web), Fastify (API), a shared zod contract, and an MCP server,
+in an npm-workspaces monorepo. No database; the filesystem is the store.
