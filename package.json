@@ -2,6 +2,7 @@
   "name": "AiDailyTaks",
   "version": "1.0.0",
   "private": true,
+  "license": "MIT",
   "description": "Local, file-based task tracker co-managed by a human and an AI agent over a Markdown store.",
   "type": "module",
   "workspaces": [

@@ -231,3 +231,7 @@ codebase you're working on.**
 
 TypeScript end to end — React + Vite (web), Fastify (API), a shared zod contract, and an MCP server,
 in an npm-workspaces monorepo. No database; the filesystem is the store.
+
+## License
+
+This project is open source under the [MIT License](LICENSE).
