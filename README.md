@@ -81,6 +81,70 @@ npm run import -- --source path/to/your-doc.md
 
 The importer is idempotent and never modifies your source file. A fresh board works fine without it.
 
+## Using the board
+
+Everything below happens at **http://localhost:5173** (dev) or **http://localhost:4317** (`npm start`).
+The top bar has your views, search, the project picker, **New task**, and **Export**.
+
+### Create a task
+
+Click **New task** (top bar). Give it a title, pick the project, status, category, severity, and risk,
+and optionally a one-paragraph summary. Press **Create** (or ⌘/Ctrl + Enter). The server assigns the
+next id automatically (`C01`, `C02`, …) and opens the new task so you can flesh it out.
+
+Every task is written to `board/<ID>/task.md` on disk the moment you create it — no save step, no
+database.
+
+### Work a task
+
+- **Change status:** on the **Board**, drag a card between columns. That rewrites the task's `status`
+  and (for Completed) stamps the completion date.
+- **Open the details:** click any card (or a row in the **Table**) to open the task drawer. There you
+  can edit the title, all the metadata, the Markdown **Summary** and **Scope**, and the relationship
+  fields (`depends_on`, `blocks`, `relates_to`, `parent` — comma-separated ids like `C01, C02`). Click
+  **Save** to write it back.
+- **Log progress:** add a note in the **Observations** box — it's appended with a timestamp and
+  author, newest last, so a task carries its own history.
+- **Attach files:** drag files onto the drawer's upload area, or **paste a screenshot directly into an
+  observation** — it's saved under `board/<ID>/files/` and embedded inline in the note.
+- **Archive / restore:** finished tasks auto-archive after a while (configurable in
+  `board.config.json`), or archive one by hand from the drawer. The **Archive** view lists them and
+  restores with one click.
+
+### Create a project
+
+Click the **＋** next to the project picker in the top bar, type a name, and confirm. Projects are
+stored in the local, git-ignored `projects.json` (`[{ "id", "label" }]`); you can also edit that file
+by hand and the browser refreshes live. Switch the active project from the same picker (or **All
+projects**), and it scopes every view and filter.
+
+### Find things
+
+- **Search:** the top-bar box filters by text (debounced).
+- **Filters:** the filter bar toggles by status, category, severity, and a created/updated/completed
+  date range. **Clear** resets them.
+- **Views:** **Board** (Kanban), **Backlog** (parked work), **Table** (sortable), **Graph**
+  (dependency map), **Archive**, **Stats**, and **Connect** (MCP setup).
+
+### Export to Markdown
+
+Click **Export** (top bar) to open the export dialog. Choose which statuses / categories / projects to
+include, whether to include scope and observations, and how to group the output (by status, category,
+project, or none). Click **Export** and it:
+
+1. writes a timestamped `.md` file into `exports/` (git-ignored), and
+2. shows a preview with a **Download** button to save a copy anywhere.
+
+Recent exports are listed at the bottom of the dialog. Handy for sharing a status snapshot or pasting
+a filtered slice of the board into a report.
+
+### Let an agent drive it
+
+Because tasks are plain files, any file-editing agent can create tasks, update status, and log
+observations directly — see [Connect any AI agent (MCP)](#connect-any-ai-agent-mcp) below for the
+structured-tools path, and [AGENTS.md](AGENTS.md) / [CLAUDE.md](CLAUDE.md) for the conventions an agent
+should follow.
+
 ## How it's laid out
 
 ```
@@ -134,11 +198,17 @@ http://127.0.0.1:4317/mcp
 Or run it directly with `npm run mcp`. Either path edits the same `board/` files with the same
 optimistic-concurrency + atomic writes as the web UI, so the browser updates live.
 
+**Once it's connected**, you don't call the tools by hand — just ask your agent in plain language,
+e.g. *"add a Bug task for the flaky upload retry, high severity,"* *"move C12 to In progress and note
+what you tried,"* or *"list everything still open in the Sample project."* The agent picks the right
+tool, and you watch the board update live in the browser.
+
 ## Working conventions
 
-See [CLAUDE.md](CLAUDE.md) for how the agent is expected to work with the board — the frontmatter
-schema, how to keep relationships consistent, and the guiding rule: **scope and tracking notes are
-created here as tasks, not scattered across the codebase you're working on.**
+See [AGENTS.md](AGENTS.md) (any agent) or [CLAUDE.md](CLAUDE.md) (Claude Code) for how an agent is
+expected to work with the board — the frontmatter schema, how to keep relationships consistent, and
+the guiding rule: **scope and tracking notes are created here as tasks, not scattered across the
+codebase you're working on.**
 
 ## Tech
 
