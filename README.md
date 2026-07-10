@@ -2,6 +2,11 @@
 
 **A local, file-based task board that a human and an AI agent manage together — one Markdown file per task, edited live from both sides.**
 
+![The board — a drag-and-drop Kanban of the sample project](docs/screenshots/board.png)
+
+> The screenshots in this README are of a small **sample** board included for illustration; your own
+> task data stays local and git-ignored.
+
 ---
 
 ## Why this exists
@@ -57,6 +62,12 @@ missing when all I had was a chat window and a giant text file.
 - **Live sync** via server-sent events, with optimistic concurrency + atomic writes so the UI and
   the agent can edit the same task without clobbering each other.
 
+The **dependency graph** and **stats** views:
+
+![Dependency graph of the sample tasks](docs/screenshots/graph.png)
+
+![Statistics — cycle time and throughput](docs/screenshots/stats.png)
+
 ## Quick start
 
 ```bash
@@ -95,6 +106,8 @@ next id automatically (`C01`, `C02`, …) and opens the new task so you can fles
 Every task is written to `board/<ID>/task.md` on disk the moment you create it — no save step, no
 database.
 
+![The New task dialog](docs/screenshots/new-task.png)
+
 ### Work a task
 
 - **Change status:** on the **Board**, drag a card between columns. That rewrites the task's `status`
@@ -110,6 +123,8 @@ database.
 - **Archive / restore:** finished tasks auto-archive after a while (configurable in
   `board.config.json`), or archive one by hand from the drawer. The **Archive** view lists them and
   restores with one click.
+
+![The task detail drawer — summary, scope, observations, attachments, and editable metadata](docs/screenshots/task-drawer.png)
 
 ### Create a project
 
@@ -137,6 +152,8 @@ project, or none). Click **Export** and it:
 
 Recent exports are listed at the bottom of the dialog. Handy for sharing a status snapshot or pasting
 a filtered slice of the board into a report.
+
+![The export dialog](docs/screenshots/export.png)
 
 ### Let an agent drive it
 
