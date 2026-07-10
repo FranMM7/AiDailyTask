@@ -1,0 +1,58 @@
+/* syntax highlighting theme for rendered markdown code blocks (must precede @tailwind) */
+@import "highlight.js/styles/github-dark.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Tie color-scheme to the app's own theme toggle (.dark on <html>), not the OS,
+   so native controls — <select> option popups, scrollbars — render legibly. */
+:root {
+  color-scheme: light;
+}
+:root.dark {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-slate-100 text-slate-900 antialiased;
+}
+
+.dark body {
+  @apply bg-slate-950 text-slate-100;
+}
+
+/* Native <select> option popups: explicit colors as a fallback for browsers
+   that don't fully honor color-scheme on the option list. */
+select option {
+  background-color: #ffffff;
+  color: #0f172a;
+}
+:root.dark select option {
+  background-color: #0f172a;
+  color: #f1f5f9;
+}
+
+/* Rendered markdown ("prose") — minimal, since we don't pull in the typography plugin. */
+.md h1 { @apply text-xl font-semibold mt-4 mb-2; }
+.md h2 { @apply text-lg font-semibold mt-4 mb-2; }
+.md h3 { @apply text-base font-semibold mt-3 mb-1; }
+.md p { @apply my-2 leading-relaxed; }
+.md ul { @apply list-disc pl-6 my-2; }
+.md ol { @apply list-decimal pl-6 my-2; }
+.md li { @apply my-1; }
+.md a { @apply text-blue-600 dark:text-blue-400 underline; }
+.md img { @apply block max-w-full max-h-96 my-2 rounded-lg border border-slate-200 object-contain cursor-zoom-in dark:border-slate-800; }
+.md a:has(img) { @apply no-underline; }
+.md code { @apply font-mono text-[0.85em] px-1 py-0.5 rounded bg-slate-200 dark:bg-slate-800; }
+.md pre { @apply my-3 p-3 rounded-lg overflow-x-auto bg-slate-900 text-slate-100; }
+.md pre code { @apply bg-transparent p-0; }
+.md table { @apply my-3 border-collapse text-sm; }
+.md th, .md td { @apply border border-slate-300 dark:border-slate-700 px-2 py-1 text-left; }
+.md blockquote { @apply border-l-4 border-slate-300 dark:border-slate-700 pl-3 my-2 italic text-slate-600 dark:text-slate-400; }

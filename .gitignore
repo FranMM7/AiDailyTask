@@ -1,0 +1,20 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+Thumbs.db
+app/web/dist/
+app/server/dist/
+app/shared/dist/
+# transient importer/atomic-write artifacts
+board/**/*.tmp-*
+.vite/
+
+# ── Private, machine-local data (NEVER committed) ──────────────────────────────
+# This tracker is localhost-only; task content and project names are private and
+# must not be exposed if the repo is ever published. board.config.json (the shared
+# enum/color vocabulary) stays tracked as a template; the data below does not.
+board/
+exports/
+projects.json
+projects.json.tmp-*

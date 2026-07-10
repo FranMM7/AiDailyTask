@@ -1,0 +1,29 @@
+{
+  "name": "AiDailyTaks",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local, file-based task tracker co-managed by a human and an AI agent over a Markdown store.",
+  "type": "module",
+  "workspaces": [
+    "app/shared",
+    "app/server",
+    "app/web"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,web -c cyan,magenta \"npm:dev:server\" \"npm:dev:web\"",
+    "dev:server": "npm run dev --workspace app/server",
+    "dev:web": "npm run dev --workspace app/web",
+    "build": "npm run build --workspace app/shared && npm run build --workspace app/web && npm run build --workspace app/server",
+    "start": "npm run start --workspace app/server",
+    "mcp": "npm run mcp --workspace app/server",
+    "import": "npm run import --workspace app/server --",
+    "import:dry": "npm run import --workspace app/server -- --dry-run",
+    "typecheck": "npm run typecheck --workspaces --if-present"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

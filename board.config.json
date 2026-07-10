@@ -1,0 +1,36 @@
+{
+  "idPrefix": "C",
+  "idPad": 2,
+  "statuses": [
+    { "id": "Backlog", "label": "Backlog", "color": "#94a3b8", "order": 0 },
+    { "id": "Not started", "label": "Not started", "color": "#64748b", "order": 1 },
+    { "id": "Scoped", "label": "Scoped", "color": "#3b82f6", "order": 2 },
+    { "id": "In progress", "label": "In progress", "color": "#eab308", "order": 3 },
+    { "id": "Completed", "label": "Completed", "color": "#22c55e", "order": 4 }
+  ],
+  "categories": [
+    { "id": "Refactor", "label": "Refactor", "color": "#3b82f6" },
+    { "id": "Bug", "label": "Bug", "color": "#ef4444" },
+    { "id": "Feature", "label": "Feature", "color": "#22c55e" },
+    { "id": "UX", "label": "UX", "color": "#a855f7" },
+    { "id": "Arch", "label": "Arch", "color": "#f97316" },
+    { "id": "Org", "label": "Org", "color": "#64748b" }
+  ],
+  "severities": [
+    { "id": "Low", "label": "Low", "color": "#22c55e", "rank": 1 },
+    { "id": "Low–Med", "label": "Low–Med", "color": "#84cc16", "rank": 2 },
+    { "id": "Medium", "label": "Medium", "color": "#eab308", "rank": 3 },
+    { "id": "Med–High", "label": "Med–High", "color": "#f97316", "rank": 4 },
+    { "id": "High", "label": "High", "color": "#ef4444", "rank": 5 }
+  ],
+  "risks": [
+    { "id": "Low", "label": "Low", "color": "#22c55e", "rank": 1 },
+    { "id": "Low–Med", "label": "Low–Med", "color": "#84cc16", "rank": 2 },
+    { "id": "Medium", "label": "Medium", "color": "#eab308", "rank": 3 },
+    { "id": "Med–High", "label": "Med–High", "color": "#f97316", "rank": 4 },
+    { "id": "High", "label": "High", "color": "#ef4444", "rank": 5 }
+  ],
+  "card": { "colorBy": "category" },
+  "board": { "completedColumnLimit": 10 },
+  "archive": { "autoArchiveDays": 14 }
+}
