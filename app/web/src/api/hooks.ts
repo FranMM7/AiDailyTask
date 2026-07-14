@@ -6,6 +6,7 @@ import {
 } from "@tanstack/react-query";
 import type {
   BoardConfig,
+  CodeGraphData,
   CreateProjectRequest,
   CreateRequest,
   EditableFields,
@@ -17,7 +18,8 @@ import type {
   TaskDetailOrInvalid,
   TaskFilter,
   TaskSummaryOrInvalid,
-} from "@AiDailyTaks/shared";
+  UpdateProjectRequest,
+} from "@AiDailyTasks/shared";
 import * as api from "./client";
 import { ApiRequestError } from "./client";
 import { toast } from "@/store/toast";
@@ -69,6 +71,17 @@ export function useExports() {
   return useQuery({
     queryKey: ["exports"],
     queryFn: api.getExports,
+  });
+}
+
+export function useCodeGraph(projectId: string | null | undefined) {
+  return useQuery<CodeGraphData>({
+    queryKey: ["code-graph", projectId],
+    queryFn: () => api.getCodeGraph(projectId as string),
+    enabled: !!projectId,
+    // While indexing, poll as a fallback in case the SSE nudge is missed.
+    refetchInterval: (query) =>
+      query.state.data?.meta.status === "indexing" ? 2500 : false,
   });
 }
 
@@ -132,6 +145,40 @@ export function useAddProject() {
     onError: (err) => {
       const message =
         err instanceof ApiRequestError ? err.message : "Couldn't add the project.";
+      toast(message, "error");
+    },
+  });
+}
+
+export function useUpdateProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, body }: { id: string; body: UpdateProjectRequest }) =>
+      api.updateProject(id, body),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["config"] });
+    },
+    onError: (err) => {
+      const message =
+        err instanceof ApiRequestError ? err.message : "Couldn't update the project.";
+      toast(message, "error");
+    },
+  });
+}
+
+export function useGenerateCodeGraph() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (projectId: string) => api.generateCodeGraph(projectId),
+    onSuccess: ({ meta }, projectId) => {
+      // Reflect the "indexing" status immediately; SSE/polling take it from here.
+      qc.setQueryData<CodeGraphData>(["code-graph", projectId], (old) =>
+        old ? { ...old, meta } : { meta, nodes: [], edges: [] },
+      );
+    },
+    onError: (err) => {
+      const message =
+        err instanceof ApiRequestError ? err.message : "Couldn't start graph generation.";
       toast(message, "error");
     },
   });

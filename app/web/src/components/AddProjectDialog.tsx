@@ -17,16 +17,19 @@ export function AddProjectDialog({
 }) {
   const addProject = useAddProject();
   const [name, setName] = useState("");
+  const [root, setRoot] = useState("");
 
   const submit = () => {
     const trimmed = name.trim();
     if (!trimmed) return;
+    const rootTrimmed = root.trim();
     addProject.mutate(
-      { id: trimmed, label: trimmed },
+      { id: trimmed, label: trimmed, ...(rootTrimmed ? { root: rootTrimmed } : {}) },
       {
         onSuccess: () => {
           toast(`Added project ${trimmed}`, "success");
           setName("");
+          setRoot("");
           onOpenChange(false);
         },
       },
@@ -61,8 +64,24 @@ export function AddProjectDialog({
               className={inputCls}
             />
           </label>
+
+          <label className="mt-3 block">
+            <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+              Source path <span className="font-normal normal-case text-slate-400">(optional)</span>
+            </span>
+            <input
+              value={root}
+              onChange={(e) => setRoot(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submit();
+              }}
+              placeholder="e.g. C:\\Code\\my-project"
+              className={`${inputCls} font-mono text-xs`}
+            />
+          </label>
           <p className="mt-2 text-xs text-slate-500">
-            Saved to the local <code>projects.json</code> (not committed).
+            Saved to the local <code>projects.json</code> (not committed). The source path enables{" "}
+            <strong>code-graph</strong> generation and can be added later.
           </p>
 
           <div className="mt-5 flex items-center justify-end gap-2">

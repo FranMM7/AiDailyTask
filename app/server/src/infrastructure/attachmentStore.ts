@@ -9,7 +9,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { ReadStream } from "node:fs";
 import mime from "mime";
-import { type Attachment, normalizeId } from "@AiDailyTaks/shared";
+import { type Attachment, normalizeId } from "@AiDailyTasks/shared";
 import type { Env } from "../env";
 import { NotFoundError, ValidationError } from "../errors";
 

@@ -21,7 +21,7 @@ import {
   STATUSES,
   CATEGORIES,
   idNum,
-} from "@AiDailyTaks/shared";
+} from "@AiDailyTasks/shared";
 import { applyFilter } from "../domain/filter";
 import { buildGraph } from "../domain/graph";
 import type { FsTaskRepository, MutationResult } from "../infrastructure/taskRepository";
@@ -182,7 +182,7 @@ export class ExportService {
     });
     selected.sort((a, b) => idNum(a.id) - idNum(b.id));
 
-    const title = req.title && req.title.trim() ? req.title.trim() : "AiDailyTaks export";
+    const title = req.title && req.title.trim() ? req.title.trim() : "AiDailyTasks export";
     const now = new Date();
     const markdown = await this.render(title, now, selected, req);
 

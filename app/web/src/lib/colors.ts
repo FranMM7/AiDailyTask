@@ -1,4 +1,4 @@
-import type { BoardConfig, EnumDef } from "@AiDailyTaks/shared";
+import type { BoardConfig, EnumDef } from "@AiDailyTasks/shared";
 
 const FALLBACK = "#64748b";
 

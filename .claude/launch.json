@@ -2,7 +2,7 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "AiDailyTaks",
+      "name": "AiDailyTasks",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["start"],
       "port": 4317

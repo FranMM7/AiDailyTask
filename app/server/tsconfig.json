@@ -3,7 +3,7 @@
   "compilerOptions": {
     "types": ["node"],
     "paths": {
-      "@AiDailyTaks/shared": ["../shared/src/index.ts"]
+      "@AiDailyTasks/shared": ["../shared/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts"]

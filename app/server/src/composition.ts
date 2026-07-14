@@ -17,6 +17,7 @@ import {
   GraphService,
   ExportService,
 } from "./application/services";
+import { CodeGraphService } from "./application/codeGraphService";
 import type { Services } from "./interface/http/routes";
 import type { Env } from "./env";
 import type { EventBus } from "./infrastructure/eventBus";
@@ -34,6 +35,7 @@ export interface Core {
 export async function buildCore(env: Env, bus: EventBus): Promise<Core> {
   await fs.mkdir(env.boardDir, { recursive: true });
   await fs.mkdir(env.exportsDir, { recursive: true });
+  await fs.mkdir(env.graphsDir, { recursive: true });
 
   const config = new ConfigService(env);
   const recentWrites = new RecentWrites();
@@ -48,6 +50,7 @@ export async function buildCore(env: Env, bus: EventBus): Promise<Core> {
     tasks: new TaskService(repo),
     attachments: new AttachmentService(attachmentStore, repo, bus),
     graph: new GraphService(repo),
+    codeGraph: new CodeGraphService(env, projects, bus),
     exports: new ExportService(env, repo),
   };
 

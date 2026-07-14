@@ -1,11 +1,11 @@
-# AiDailyTaks — instructions for AI agents
+# AiDailyTasks — instructions for AI agents
 
 > This is the cross-agent instruction file (the `AGENTS.md` convention read by Codex, Antigravity,
 > Cursor, and other agents). If you are Claude Code, the same guidance lives in [CLAUDE.md](CLAUDE.md);
 > for a ready-made subagent definition see [.claude/agents/](.claude/agents/). Everything below applies
 > to **any** agent working on this board.
 
-AiDailyTaks is an **internal, localhost-only** task tracker that a human (Francis) and an AI agent
+AiDailyTasks is an **internal, localhost-only** task tracker that a human (Francis) and an AI agent
 (you) co-manage. It exists so scope, tracking, and design notes live in one shared place — a board —
 instead of being scattered as loose docs across the codebase you're actually working on.
 
@@ -93,7 +93,8 @@ direct file edits are the normal path and always safe.
 - **List tasks:** glob `board/*/task.md`, then read. To search content, grep under `board/`.
 - **Structured access (optional):** the app is also an MCP server (`npm run mcp`, or the HTTP
   endpoint at `http://127.0.0.1:4317/mcp`) exposing `list_tasks`, `get_task`, `create_task`,
-  `update_task`, `add_observation`, `archive_task` / `unarchive_task`, `list_projects`,
+  `update_task`, `add_observation`, `list_attachments`, `get_attachment`,
+  `archive_task` / `unarchive_task`, `list_projects`,
   `add_project`, `get_config`, `get_graph`. See the README for connection details.
 
 ## Vocabulary
@@ -112,3 +113,10 @@ the file and the browser refreshes live.
 Be concise: say what you found or changed, the task id(s), and the new status. Don't dump entire file
 contents unless asked. The `board/` folder is also a valid Obsidian vault (frontmatter + `[[C26]]`
 wiki-links) if the human wants to open it there.
+
+## Workflow shortcuts
+
+Reusable project skills live under `.agents/skills/`. Use `orchestrate-board-work` for session
+briefings and the scope, work, verification, and completion stages. Use `approach-as-role` when a
+task should be handled through an engineer, full-stack, frontend, backend, QA, architecture, or
+security lens. Claude Code exposes matching slash commands under `.claude/commands/`.

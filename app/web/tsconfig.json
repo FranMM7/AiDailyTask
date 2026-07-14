@@ -14,7 +14,7 @@
     "noEmit": true,
     "forceConsistentCasingInFileNames": true,
     "paths": {
-      "@AiDailyTaks/shared": ["../shared/src/index.ts"],
+      "@AiDailyTasks/shared": ["../shared/src/index.ts"],
       "@/*": ["./src/*"]
     }
   },

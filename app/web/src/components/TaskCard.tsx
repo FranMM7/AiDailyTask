@@ -1,5 +1,5 @@
 import { Paperclip, MessageSquare, AlertTriangle } from "lucide-react";
-import type { TaskSummaryOrInvalid } from "@AiDailyTaks/shared";
+import type { TaskSummaryOrInvalid } from "@AiDailyTasks/shared";
 import { useConfig } from "@/api/hooks";
 import { useUiStore } from "@/store/ui";
 import { categoryColor, severityColor } from "@/lib/colors";

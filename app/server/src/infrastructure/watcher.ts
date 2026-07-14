@@ -6,7 +6,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { watch, type FSWatcher } from "chokidar";
-import { normalizeId } from "@AiDailyTaks/shared";
+import { normalizeId } from "@AiDailyTasks/shared";
 import type { Env } from "../env";
 import type { FsTaskRepository } from "./taskRepository";
 import type { EventBus } from "./eventBus";

@@ -1,7 +1,7 @@
 import { useMemo, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { RotateCcw } from "lucide-react";
-import type { TaskFilter, TaskSummary } from "@AiDailyTaks/shared";
+import type { TaskFilter, TaskSummary } from "@AiDailyTasks/shared";
 import { useTasks, useUnarchiveTask } from "@/api/hooks";
 import { readFilter } from "@/lib/filters";
 import { useTaskDrawer } from "@/lib/navigation";

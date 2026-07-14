@@ -9,8 +9,8 @@ import {
   type SortingState,
 } from "@tanstack/react-table";
 import { ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
-import type { TaskSummaryOrInvalid } from "@AiDailyTaks/shared";
-import { LEVEL_RANK, STATUS_ORDER } from "@AiDailyTaks/shared";
+import type { TaskSummaryOrInvalid } from "@AiDailyTasks/shared";
+import { LEVEL_RANK, STATUS_ORDER } from "@AiDailyTasks/shared";
 import { useTasks } from "@/api/hooks";
 import { readFilter } from "@/lib/filters";
 import { useTaskDrawer } from "@/lib/navigation";

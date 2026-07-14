@@ -4,7 +4,7 @@
  */
 import { EventEmitter } from "node:events";
 import type { ServerResponse } from "node:http";
-import type { SseEvent } from "@AiDailyTaks/shared";
+import type { SseEvent } from "@AiDailyTasks/shared";
 
 export class EventBus {
   private emitter = new EventEmitter();

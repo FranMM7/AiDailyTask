@@ -12,7 +12,7 @@ import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import type { McpInfo } from "@AiDailyTaks/shared";
+import type { McpInfo } from "@AiDailyTasks/shared";
 import { buildMcpServer, MCP_TOOL_SUMMARY } from "./server";
 import type { Services } from "../http/routes";
 import type { Env } from "../../env";
@@ -28,7 +28,7 @@ export function registerMcpHttp(app: FastifyInstance, services: Services, env: E
   // Connection details for the in-app Connect page (copy-paste configs).
   app.get("/api/mcp-info", async (_req, reply) => {
     const info: McpInfo = {
-      serverName: "AiDailyTaks",
+      serverName: "AiDailyTasks",
       http: { url: mcpHttpUrl(env) },
       stdio: { command: "npm", args: ["run", "mcp"], cwd: env.root },
       tools: MCP_TOOL_SUMMARY,

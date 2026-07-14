@@ -14,7 +14,11 @@
     { "id": "Feature", "label": "Feature", "color": "#22c55e" },
     { "id": "UX", "label": "UX", "color": "#a855f7" },
     { "id": "Arch", "label": "Arch", "color": "#f97316" },
-    { "id": "Org", "label": "Org", "color": "#64748b" }
+    { "id": "Org", "label": "Org", "color": "#64748b" },
+    { "id": "Docs", "label": "Docs", "color": "#06b6d4" },
+    { "id": "Test", "label": "Test", "color": "#14b8a6" },
+    { "id": "Perf", "label": "Perf", "color": "#eab308" },
+    { "id": "Security", "label": "Security", "color": "#ec4899" }
   ],
   "severities": [
     { "id": "Low", "label": "Low", "color": "#22c55e", "rank": 1 },

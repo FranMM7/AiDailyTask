@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orchestrate Board Work"
+  short_description: "Move board tasks safely through the delivery lifecycle"
+  default_prompt: "Use $orchestrate-board-work to inspect the board and advance the requested task through the appropriate workflow stage."

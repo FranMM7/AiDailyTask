@@ -12,13 +12,22 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { nanoid } from "nanoid";
-import type { CreateProjectRequest, ProjectDef } from "@AiDailyTaks/shared";
+import type {
+  CreateProjectRequest,
+  ProjectDef,
+  UpdateProjectRequest,
+} from "@AiDailyTasks/shared";
 import type { Env } from "./env";
 import type { EventBus } from "./infrastructure/eventBus";
-import { ValidationError } from "./errors";
+import { NotFoundError, ValidationError } from "./errors";
 
 const ProjectsFileSchema = z.array(
-  z.object({ id: z.string().min(1), label: z.string().min(1) }),
+  z.object({
+    id: z.string().min(1),
+    label: z.string().min(1),
+    root: z.string().min(1).optional(),
+    indexer: z.enum(["builtin", "graphify"]).optional(),
+  }),
 );
 
 /** Default seed for a fresh install (no projects.json yet). */
@@ -54,16 +63,58 @@ export class ProjectsService {
     }
   }
 
+  /** One project by id (exact match), or undefined. */
+  get(id: string): ProjectDef | undefined {
+    return this.list().find((p) => p.id === id);
+  }
+
   /** Add a project (idempotent on id). Publishes config.updated. Returns the full list. */
   async add(req: CreateProjectRequest): Promise<ProjectDef[]> {
     const id = req.id.trim();
     if (!id) throw new ValidationError("Project id is required");
     const label = (req.label ?? id).trim() || id;
+    const root = req.root?.trim();
     const current = this.list();
     if (current.some((p) => p.id.toLowerCase() === id.toLowerCase())) {
       throw new ValidationError(`Project "${id}" already exists`);
     }
-    const next = [...current, { id, label }];
+    const entry: ProjectDef = {
+      id,
+      label,
+      ...(root ? { root } : {}),
+      ...(req.indexer ? { indexer: req.indexer } : {}),
+    };
+    const next = [...current, entry];
+    await this.write(next);
+    this.bus.publish({ type: "config.updated" });
+    return next;
+  }
+
+  /**
+   * Update an existing project's label and/or root (id is immutable). An empty-string
+   * `root` clears it; an omitted field is left unchanged. Publishes config.updated.
+   */
+  async update(id: string, req: UpdateProjectRequest): Promise<ProjectDef[]> {
+    const current = this.list();
+    const idx = current.findIndex((p) => p.id === id);
+    if (idx === -1) throw new NotFoundError(`Project "${id}" not found`);
+
+    const existing = current[idx];
+    const label = req.label !== undefined ? req.label.trim() || existing.label : existing.label;
+    let root = existing.root;
+    if (req.root !== undefined) {
+      const trimmed = req.root.trim();
+      root = trimmed.length > 0 ? trimmed : undefined;
+    }
+    const indexer = req.indexer ?? existing.indexer;
+    const updated: ProjectDef = {
+      id: existing.id,
+      label,
+      ...(root ? { root } : {}),
+      ...(indexer ? { indexer } : {}),
+    };
+    const next = [...current];
+    next[idx] = updated;
     await this.write(next);
     this.bus.publish({ type: "config.updated" });
     return next;

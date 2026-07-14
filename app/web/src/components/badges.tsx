@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Category, Level, Status } from "@AiDailyTaks/shared";
+import type { Category, Level, Status } from "@AiDailyTasks/shared";
 import { useConfig } from "@/api/hooks";
 import { categoryColor, riskColor, severityColor, statusColor, tint } from "@/lib/colors";
 

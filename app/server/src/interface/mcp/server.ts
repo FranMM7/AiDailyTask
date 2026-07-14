@@ -1,5 +1,5 @@
 /**
- * Builds the AiDailyTaks MCP server: exposes the board's application services as MCP
+ * Builds the AiDailyTasks MCP server: exposes the board's application services as MCP
  * tools so an agent can read/create/update tasks, manage projects, and inspect the
  * config/graph. The same builder backs BOTH transports — stdio (mcp.ts) and the
  * Streamable-HTTP mount (http.ts) — so they present an identical tool set.
@@ -8,6 +8,7 @@
  * baseRev is optional on writes — when omitted we read the task's current rev first, which
  * is friendlier for a model at the (accepted) cost of a wider optimistic-concurrency window.
  */
+import type { ReadStream } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
@@ -16,16 +17,37 @@ import {
   STATUSES,
   CATEGORIES,
   LEVELS,
+  normalizeId,
   type EditableFields,
   type PatchRequest,
   type TaskDetailOrInvalid,
-} from "@AiDailyTaks/shared";
+} from "@AiDailyTasks/shared";
 import type { Services } from "../http/routes";
 
+type ToolContent =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string }
+  | {
+      type: "resource";
+      resource:
+        | { uri: string; mimeType?: string; text: string }
+        | { uri: string; mimeType?: string; blob: string };
+    };
+
 type ToolResult = {
-  content: { type: "text"; text: string }[];
+  content: ToolContent[];
   isError?: boolean;
 };
+
+/** Cap on inline attachment fetches; larger files must be downloaded over HTTP. */
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+/** Collect a readable stream into a single Buffer. */
+async function collectStream(stream: ReadStream): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks);
+}
 
 function ok(data: unknown): ToolResult {
   const text = typeof data === "string" ? data : JSON.stringify(data, null, 2);
@@ -42,12 +64,22 @@ export const MCP_TOOL_SUMMARY: { name: string; description: string }[] = [
   { name: "create_task", description: "Create a task; the id is auto-assigned." },
   { name: "update_task", description: "Patch a task's fields and/or summary/scope." },
   { name: "add_observation", description: "Append a timestamped note to a task's Observations log." },
+  { name: "list_attachments", description: "List the files attached to a task (name, size, mime, url)." },
+  { name: "get_attachment", description: "Fetch one of a task's attachments by filename (image/text/base64)." },
   { name: "archive_task", description: "Archive a task (hide from the board)." },
   { name: "unarchive_task", description: "Restore an archived task." },
-  { name: "list_projects", description: "List configured projects." },
-  { name: "add_project", description: "Add a project to the local projects.json." },
+  { name: "list_projects", description: "List configured projects (id, label, source root)." },
+  { name: "add_project", description: "Add a project to the local projects.json (optional source root)." },
+  { name: "update_project", description: "Edit a project's label and/or source root path." },
   { name: "get_config", description: "Board vocabulary: statuses, categories, severities, risks, projects." },
   { name: "get_graph", description: "Task relationship graph (depends_on / blocks / relates_to / parent)." },
+  { name: "generate_code_graph", description: "Build/refresh a project's code graph (async; built-in or graphify per project)." },
+  { name: "get_code_graph", description: "Code-graph status + overview (hubs, folders, kinds); set full=true for all nodes/edges." },
+  { name: "query_code_graph", description: "A file/symbol's dependencies/dependents (kind + relation aware) — avoids re-reading the repo." },
+  { name: "graphify_query", description: "Natural-language question answered from the graphify knowledge graph (needs graphify indexer)." },
+  { name: "graphify_affected", description: "Blast radius: what a change to a node impacts (graphify indexer)." },
+  { name: "graphify_explain", description: "Plain-language explanation of a node and its neighbors (graphify indexer)." },
+  { name: "graphify_path", description: "Shortest path between two nodes in the graphify graph (graphify indexer)." },
 ];
 
 /** Message for the standard { conflict, current } result. */
@@ -55,7 +87,7 @@ const CONFLICT_MSG =
   "Conflict: the task changed on disk since it was read. Re-read the task and retry with its current rev.";
 
 export function buildMcpServer(services: Services, version = "1.0.0"): McpServer {
-  const server = new McpServer({ name: "AiDailyTaks", version });
+  const server = new McpServer({ name: "AiDailyTasks", version });
 
   // ── Read ───────────────────────────────────────────────────────────────────
   server.registerTool(
@@ -137,6 +169,74 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
         observations: t.observations,
         attachments: t.attachments.map((a) => ({ name: a.name, size: a.size, url: a.url })),
       });
+    },
+  );
+
+  server.registerTool(
+    "list_attachments",
+    {
+      title: "List attachments",
+      description:
+        "List the files attached to a task: name, size (bytes), mime type, last-modified, and download url. " +
+        "Use get_attachment to fetch a file's contents.",
+      inputSchema: { id: z.string().describe("Task id, e.g. C09") },
+    },
+    async ({ id }) => {
+      try {
+        const attachments = await services.attachments.list(id);
+        return ok({ id: normalizeId(id), count: attachments.length, attachments });
+      } catch (err) {
+        return fail(`Cannot list attachments for ${id}: ${(err as Error).message}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_attachment",
+    {
+      title: "Get attachment",
+      description:
+        "Fetch one of a task's attachments by filename. Images are returned as image content, text files " +
+        "(text/*, application/json) as text, and any other type as a base64 resource. Use list_attachments " +
+        "first to get exact filenames.",
+      inputSchema: {
+        id: z.string().describe("Task id, e.g. C09"),
+        name: z.string().describe("Attachment filename, exactly as returned by list_attachments"),
+      },
+    },
+    async ({ id, name }) => {
+      let file: Awaited<ReturnType<Services["attachments"]["read"]>>;
+      try {
+        file = await services.attachments.read(id, name);
+      } catch (err) {
+        return fail(`Attachment not found: ${name} (task ${id}) — ${(err as Error).message}`);
+      }
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        return fail(
+          `Attachment ${name} is ${file.size} bytes, over the ${MAX_ATTACHMENT_BYTES}-byte inline limit. ` +
+            `Download it over HTTP at /api/tasks/${normalizeId(id)}/attachments/${encodeURIComponent(name)}.`,
+        );
+      }
+      const buffer = await collectStream(file.stream());
+      const mimeType = file.mime;
+      if (/^image\//.test(mimeType)) {
+        return { content: [{ type: "image", data: buffer.toString("base64"), mimeType }] };
+      }
+      if (/^text\//.test(mimeType) || mimeType === "application/json") {
+        return { content: [{ type: "text", text: buffer.toString("utf8") }] };
+      }
+      return {
+        content: [
+          {
+            type: "resource",
+            resource: {
+              uri: `file:///${normalizeId(id)}/files/${encodeURIComponent(name)}`,
+              mimeType,
+              blob: buffer.toString("base64"),
+            },
+          },
+        ],
+      };
     },
   );
 
@@ -277,12 +377,50 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
     "add_project",
     {
       title: "Add project",
-      description: "Add a project to the local projects.json.",
-      inputSchema: { id: z.string().min(1), label: z.string().optional() },
+      description:
+        "Add a project to the local projects.json. Pass `root` (absolute source path) to enable code-graph " +
+        "generation, and `indexer` to choose the engine (default 'builtin').",
+      inputSchema: {
+        id: z.string().min(1),
+        label: z.string().optional(),
+        root: z.string().optional().describe("Absolute path to the project's source tree"),
+        indexer: z
+          .enum(["builtin", "graphify"])
+          .optional()
+          .describe("Code-graph engine: 'builtin' (file-level) or 'graphify' (symbols + calls)"),
+      },
     },
-    async ({ id, label }) => {
-      const projects = await services.projects.add({ id, label });
+    async ({ id, label, root, indexer }) => {
+      const projects = await services.projects.add({ id, label, root, indexer });
       return ok({ projects });
+    },
+  );
+
+  server.registerTool(
+    "update_project",
+    {
+      title: "Update project",
+      description:
+        "Edit an existing project's label, source root, and/or code-graph engine (the id is immutable). " +
+        "Set root to enable code-graph generation (empty string clears it); set indexer to 'graphify' for the " +
+        "richer symbol/call graph or 'builtin' for the file-level scanner.",
+      inputSchema: {
+        id: z.string().min(1),
+        label: z.string().optional(),
+        root: z.string().optional().describe("Absolute source path; empty string clears it"),
+        indexer: z.enum(["builtin", "graphify"]).optional().describe("Code-graph engine"),
+      },
+    },
+    async ({ id, label, root, indexer }) => {
+      if (label === undefined && root === undefined && indexer === undefined) {
+        return fail("Provide at least one of label, root, or indexer.");
+      }
+      try {
+        const projects = await services.projects.update(id, { label, root, indexer });
+        return ok({ projects });
+      } catch (err) {
+        return fail(`Cannot update project ${id}: ${(err as Error).message}`);
+      }
     },
   );
 
@@ -303,6 +441,295 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
       inputSchema: { project: z.string().optional() },
     },
     async ({ project }) => ok(await services.graph.build(project)),
+  );
+
+  // ── Code graph (per-project source dependency map) ────────────────────────────
+  server.registerTool(
+    "generate_code_graph",
+    {
+      title: "Generate code graph",
+      description:
+        "Build or refresh a project's code dependency graph by scanning its source root (JS/TS, Python, C#). " +
+        "Runs asynchronously and returns immediately with status \"indexing\"; poll get_code_graph until status " +
+        "is \"ready\". Requires the project to have a source root (set it via add_project/update_project).",
+      inputSchema: { project: z.string().describe("Project id, e.g. my-app") },
+    },
+    async ({ project }) => {
+      try {
+        const meta = await services.codeGraph.generate(project);
+        return ok({
+          project,
+          status: meta.status,
+          note: "Indexing started. Poll get_code_graph until status is 'ready' (or 'failed').",
+        });
+      } catch (err) {
+        return fail(`Cannot generate code graph for ${project}: ${(err as Error).message}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "get_code_graph",
+    {
+      title: "Get code graph",
+      description:
+        "A project's code-graph status and overview: file/edge counts, languages, and the most-depended-on " +
+        "files (hubs) and folders. Pass full=true to return every node and edge (only for small graphs).",
+      inputSchema: {
+        project: z.string().describe("Project id, e.g. my-app"),
+        full: z.boolean().optional().describe("Return all nodes + edges instead of an overview"),
+      },
+    },
+    async ({ project, full }) => {
+      try {
+        const { meta, nodes, edges } = await services.codeGraph.getGraph(project);
+        if (meta.status !== "ready") {
+          return ok({
+            project,
+            status: meta.status,
+            ...(meta.error ? { error: meta.error } : {}),
+            note:
+              meta.status === "empty"
+                ? "No graph yet — run generate_code_graph first."
+                : meta.status === "indexing"
+                  ? "Still indexing — poll again shortly."
+                  : "Generation failed — fix the source root and regenerate.",
+          });
+        }
+        if (full) return ok({ project, meta, nodes, edges });
+
+        const hubs = [...nodes]
+          .filter((n) => n.inDegree > 0)
+          .sort((a, b) => b.inDegree - a.inDegree)
+          .slice(0, 15)
+          .map((n) => ({
+            label: n.label,
+            kind: n.kind,
+            file: n.file,
+            dependents: n.inDegree,
+            dependencies: n.outDegree,
+          }));
+        const folders = new Map<string, number>();
+        for (const n of nodes) folders.set(n.group, (folders.get(n.group) ?? 0) + 1);
+        const folderCounts = [...folders.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .map(([group, count]) => ({ group, nodes: count }));
+
+        return ok({
+          project,
+          status: meta.status,
+          indexer: meta.indexer,
+          generatedAt: meta.generatedAt,
+          nodeCount: meta.nodeCount,
+          fileCount: meta.fileCount,
+          edgeCount: meta.edgeCount,
+          languages: meta.languages,
+          nodeKinds: meta.nodeKinds,
+          relations: meta.relations,
+          truncated: meta.truncated ?? false,
+          topHubs: hubs,
+          folders: folderCounts,
+          note: "Use query_code_graph to inspect a file/symbol's dependencies or dependents, or full=true for everything.",
+        });
+      } catch (err) {
+        return fail(`Cannot read code graph for ${project}: ${(err as Error).message}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "query_code_graph",
+    {
+      title: "Query code graph",
+      description:
+        "Look up a file OR symbol (function/class/namespace) in a project's code graph and return what it " +
+        "depends on and/or what depends on it, up to a given depth — its blast radius, without re-reading the " +
+        "codebase. `file` matches an exact path, then id, then basename, then symbol label, then substring. " +
+        "Optionally filter to one edge relation (e.g. 'calls' or 'imports').",
+      inputSchema: {
+        project: z.string().describe("Project id, e.g. my-app"),
+        file: z.string().describe("File path, basename, or symbol label, e.g. 'services.ts', 'src/app/main', or 'a()'"),
+        direction: z
+          .enum(["dependencies", "dependents", "both"])
+          .optional()
+          .describe("dependencies = what it imports/calls; dependents = what imports/calls it. Default both."),
+        relation: z
+          .enum(["imports", "imports_from", "contains", "calls", "method", "references"])
+          .optional()
+          .describe("Only traverse edges of this relation (e.g. 'calls' for the call graph)."),
+        depth: z.number().int().min(1).max(4).optional().describe("Traversal depth (default 1)"),
+      },
+    },
+    async ({ project, file, direction, relation, depth }) => {
+      try {
+        const { meta, nodes, edges } = await services.codeGraph.getGraph(project);
+        if (meta.status !== "ready") {
+          return fail(
+            `Code graph for ${project} is "${meta.status}". Run generate_code_graph and wait for "ready".`,
+          );
+        }
+        const byId = new Map(nodes.map((n) => [n.id, n]));
+        const needle = file.toLowerCase();
+        const base = needle.split("/").pop()!;
+        const describe = (n: (typeof nodes)[number]) => ({
+          label: n.label,
+          kind: n.kind,
+          ...(n.file ? { file: n.file } : {}),
+        });
+
+        // Resolve the target node: exact file, exact id, basename, exact label, then substring.
+        let match =
+          nodes.find((n) => n.file?.toLowerCase() === needle) ??
+          nodes.find((n) => n.id.toLowerCase() === needle) ??
+          nodes.find((n) => (n.file ? n.file.toLowerCase().split("/").pop() === base : false)) ??
+          nodes.find((n) => n.label.toLowerCase() === needle);
+        if (!match) {
+          const subs = nodes.filter(
+            (n) => n.file?.toLowerCase().includes(needle) || n.label.toLowerCase().includes(needle),
+          );
+          if (subs.length === 1) match = subs[0];
+          else if (subs.length > 1) {
+            return ok({
+              project,
+              ambiguous: true,
+              candidates: subs.slice(0, 25).map(describe),
+              note: "Several nodes match — call again with a fuller path or exact symbol label.",
+            });
+          }
+        }
+        if (!match) return fail(`No file or symbol matching "${file}" in ${project}'s code graph.`);
+
+        interface Adj {
+          to: string;
+          relation: string;
+        }
+        const out = new Map<string, Adj[]>();
+        const inc = new Map<string, Adj[]>();
+        const push = (m: Map<string, Adj[]>, k: string, v: Adj): void => {
+          const arr = m.get(k);
+          if (arr) arr.push(v);
+          else m.set(k, [v]);
+        };
+        for (const e of edges) {
+          if (relation && e.relation !== relation) continue;
+          push(out, e.source, { to: e.target, relation: e.relation });
+          push(inc, e.target, { to: e.source, relation: e.relation });
+        }
+
+        const maxDepth = depth ?? 1;
+        const walk = (start: string, adj: Map<string, Adj[]>) => {
+          const seen = new Set([start]);
+          const result: Record<string, unknown>[] = [];
+          let frontier = [start];
+          for (let d = 1; d <= maxDepth; d++) {
+            const nextFrontier: string[] = [];
+            for (const cur of frontier) {
+              for (const { to, relation: r } of adj.get(cur) ?? []) {
+                if (seen.has(to)) continue;
+                seen.add(to);
+                const n = byId.get(to);
+                result.push({ ...(n ? describe(n) : { label: to, kind: "external" }), relation: r, depth: d });
+                nextFrontier.push(to);
+              }
+            }
+            frontier = nextFrontier;
+            if (frontier.length === 0) break;
+          }
+          return result;
+        };
+
+        const dir = direction ?? "both";
+        const payload: Record<string, unknown> = { project, node: describe(match), depth: maxDepth };
+        if (relation) payload.relation = relation;
+        if (dir === "dependencies" || dir === "both") payload.dependencies = walk(match.id, out);
+        if (dir === "dependents" || dir === "both") payload.dependents = walk(match.id, inc);
+        return ok(payload);
+      } catch (err) {
+        return fail(`Cannot query code graph for ${project}: ${(err as Error).message}`);
+      }
+    },
+  );
+
+  // ── Graphify passthrough (native semantic queries over the graphify graph) ─────
+  // These run graphify's own subcommands against the project's graphify graph.json.
+  // They require the project to have been generated with the "graphify" indexer.
+  const graphifyText = async (project: string, args: string[], label: string): Promise<ToolResult> => {
+    try {
+      const text = await services.codeGraph.runGraphifyText(project, args);
+      return ok(text || `(${label} returned no output)`);
+    } catch (err) {
+      return fail(`graphify ${label} failed for ${project}: ${(err as Error).message}`);
+    }
+  };
+
+  server.registerTool(
+    "graphify_query",
+    {
+      title: "Graphify: query",
+      description:
+        "Ask a natural-language question about the codebase; graphify does a token-budgeted BFS over its " +
+        "knowledge graph and returns the relevant subgraph/answer. Far cheaper than reading files. " +
+        "Requires the project's indexer to be 'graphify' and a graph to have been generated.",
+      inputSchema: {
+        project: z.string().describe("Project id, e.g. my-app"),
+        question: z.string().min(1).describe("e.g. 'how does authentication work?'"),
+        budget: z.number().int().min(200).max(20000).optional().describe("Token budget (default graphify's own)"),
+      },
+    },
+    async ({ project, question, budget }) => {
+      const args = ["query", question];
+      if (budget) args.push("--budget", String(budget));
+      return graphifyText(project, args, "query");
+    },
+  );
+
+  server.registerTool(
+    "graphify_affected",
+    {
+      title: "Graphify: affected",
+      description:
+        "Reverse-traverse the graph to find what would be impacted by changing a node (its blast radius). " +
+        "Requires the 'graphify' indexer.",
+      inputSchema: {
+        project: z.string().describe("Project id, e.g. my-app"),
+        node: z.string().min(1).describe("Node label to start from, e.g. a function or file name"),
+        depth: z.number().int().min(1).max(6).optional().describe("Reverse depth (graphify default 2)"),
+      },
+    },
+    async ({ project, node, depth }) => {
+      const args = ["affected", node];
+      if (depth) args.push("--depth", String(depth));
+      return graphifyText(project, args, "affected");
+    },
+  );
+
+  server.registerTool(
+    "graphify_explain",
+    {
+      title: "Graphify: explain",
+      description:
+        "Plain-language explanation of a node and its neighbors from the graph. Requires the 'graphify' indexer.",
+      inputSchema: {
+        project: z.string().describe("Project id, e.g. my-app"),
+        node: z.string().min(1).describe("Node label to explain"),
+      },
+    },
+    async ({ project, node }) => graphifyText(project, ["explain", node], "explain"),
+  );
+
+  server.registerTool(
+    "graphify_path",
+    {
+      title: "Graphify: path",
+      description:
+        "Find the shortest path between two nodes in the graph (how A relates to B). Requires the 'graphify' indexer.",
+      inputSchema: {
+        project: z.string().describe("Project id, e.g. my-app"),
+        from: z.string().min(1).describe("Start node label"),
+        to: z.string().min(1).describe("End node label"),
+      },
+    },
+    async ({ project, from, to }) => graphifyText(project, ["path", from, to], "path"),
   );
 
   return server;

@@ -1,4 +1,4 @@
-# AiDailyTaks
+# AiDailyTasks
 
 **A local, file-based task board that a human and an AI agent manage together — one Markdown file per task, edited live from both sides.**
 
@@ -162,6 +162,17 @@ observations directly — see [Connect any AI agent (MCP)](#connect-any-ai-agent
 structured-tools path, and [AGENTS.md](AGENTS.md) / [CLAUDE.md](CLAUDE.md) for the conventions an agent
 should follow.
 
+### Use workflow and role shortcuts
+
+The repository includes two project skills under `.agents/skills/`: `orchestrate-board-work` keeps
+task context and delivery stages synchronized with the board, while `approach-as-role` applies a
+focused engineering lens without creating a separate context silo.
+
+In Claude Code, use `/session-status`, `/scope-task C12`, `/work-task C12`, `/verify-task C12`, and
+`/complete-task C12`. Role shortcuts are `/engineer`, `/fullstack`, `/frontend`, `/backend`, `/qa`,
+`/architect`, and `/security`; pass the task ID or request as the argument. In skill-aware agents,
+invoke the corresponding project skill directly.
+
 ## How it's laid out
 
 ```
@@ -182,9 +193,10 @@ app/web/               React + Vite + TypeScript frontend
 
 ## Connect any AI agent (MCP)
 
-AiDailyTaks is also an **MCP server**, so an agent gets structured tools — `list_tasks`, `get_task`,
-`create_task`, `update_task`, `add_observation`, `archive_task` / `unarchive_task`, `list_projects`,
-`add_project`, `get_config`, `get_graph` — over either transport.
+AiDailyTasks is also an **MCP server**, so an agent gets structured tools — `list_tasks`, `get_task`,
+`create_task`, `update_task`, `add_observation`, `list_attachments`, `get_attachment`,
+`archive_task` / `unarchive_task`, `list_projects`, `add_project`, `get_config`, `get_graph` — over
+either transport.
 
 Because it's built on the open [Model Context Protocol](https://modelcontextprotocol.io) **and** on
 plain files, it isn't tied to any one assistant: MCP-capable agents (Claude, and other MCP clients)
@@ -207,7 +219,7 @@ http://127.0.0.1:4317/mcp
 ```jsonc
 {
   "mcpServers": {
-    "AiDailyTaks": { "command": "npm", "args": ["run", "mcp"], "cwd": "/absolute/path/to/AiDailyTaks" }
+    "AiDailyTasks": { "command": "npm", "args": ["run", "mcp"], "cwd": "/absolute/path/to/AiDailyTasks" }
   }
 }
 ```
@@ -219,6 +231,28 @@ optimistic-concurrency + atomic writes as the web UI, so the browser updates liv
 e.g. *"add a Bug task for the flaky upload retry, high severity,"* *"move C12 to In progress and note
 what you tried,"* or *"list everything still open in the Sample project."* The agent picks the right
 tool, and you watch the board update live in the browser.
+
+## Share the board over the web (temporarily)
+
+The board is localhost-only by design, but sometimes you want to show it to someone else for a
+little while. `npm run share` opens an [ngrok](https://ngrok.com/download) tunnel to the running
+server and prints a public `https://…` link that **closes itself after a time limit**:
+
+```bash
+npm start                                   # in one terminal (build first: npm run build)
+npm run share                               # in another — 30-min tunnel, prints the public URL
+npm run share -- --minutes 60               # custom window
+npm run share -- --auth alice:s3cret        # put HTTP Basic auth in front of it
+npm run share -- --port 4317 --minutes 15   # all options
+```
+
+The tunnel auto-closes when the timer runs out (or on Ctrl-C). One-time setup: install the ngrok
+CLI and register your authtoken once with `ngrok config add-authtoken <token>` (or set
+`NGROK_AUTHTOKEN`).
+
+> **⚠️ The board has no built-in login.** Anyone with the link can read *and edit* it. Prefer
+> `--auth user:password`, keep the window short, and remember `share` only exposes what's already
+> running on the port — it never starts the server for you.
 
 ## Working conventions
 

@@ -6,7 +6,7 @@ import {
   type Status,
   type Category,
   type Level,
-} from "@AiDailyTaks/shared";
+} from "@AiDailyTasks/shared";
 
 const SORT_VALUES = [
   "id",

@@ -9,19 +9,21 @@ import {
   PatchRequestSchema,
   CreateRequestSchema,
   CreateProjectRequestSchema,
+  UpdateProjectRequestSchema,
   ObservationRequestSchema,
   TaskFilterSchema,
   ExportRequestSchema,
   ID_PATTERN,
   type ApiError,
   type ConflictResponse,
-} from "@AiDailyTaks/shared";
+} from "@AiDailyTasks/shared";
 import type {
   TaskService,
   AttachmentService,
   GraphService,
   ExportService,
 } from "../../application/services";
+import type { CodeGraphService } from "../../application/codeGraphService";
 import type { ConfigService } from "../../config";
 import type { ProjectsService } from "../../projects";
 import { NotFoundError, ValidationError, PayloadTooLargeError } from "../../errors";
@@ -32,6 +34,7 @@ export interface Services {
   tasks: TaskService;
   attachments: AttachmentService;
   graph: GraphService;
+  codeGraph: CodeGraphService;
   exports: ExportService;
 }
 
@@ -96,6 +99,44 @@ export function registerRoutes(app: FastifyInstance, services: Services): void {
       }
       const projects = await services.projects.add(parsed.data);
       reply.code(201).send({ projects });
+    } catch (err) {
+      sendError(reply, err);
+    }
+  });
+
+  // Edit an existing project's label / source root (id is immutable).
+  app.patch("/api/projects/:id", async (req, reply) => {
+    try {
+      const id = decodeURIComponent((req.params as { id: string }).id);
+      const parsed = UpdateProjectRequestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        reply.code(400).send(errorEnvelope("validation_error", "Invalid project update", parsed.error.flatten()));
+        return;
+      }
+      const projects = await services.projects.update(id, parsed.data);
+      reply.send({ projects });
+    } catch (err) {
+      sendError(reply, err);
+    }
+  });
+
+  // ── Code graph (per-project source map) ──────────────────────────────────────
+  app.get("/api/projects/:id/code-graph", async (req, reply) => {
+    try {
+      const id = decodeURIComponent((req.params as { id: string }).id);
+      const graph = await services.codeGraph.getGraph(id);
+      reply.send(graph);
+    } catch (err) {
+      sendError(reply, err);
+    }
+  });
+
+  // Kick off (or report already-running) generation. Returns immediately with meta.status="indexing".
+  app.post("/api/projects/:id/code-graph/generate", async (req, reply) => {
+    try {
+      const id = decodeURIComponent((req.params as { id: string }).id);
+      const meta = await services.codeGraph.generate(id);
+      reply.code(202).send({ meta });
     } catch (err) {
       sendError(reply, err);
     }

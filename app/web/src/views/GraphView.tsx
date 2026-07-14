@@ -12,7 +12,7 @@ import ReactFlow, {
 } from "reactflow";
 import "reactflow/dist/style.css";
 import dagre from "@dagrejs/dagre";
-import type { BoardConfig, GraphData, GraphEdge, GraphNode } from "@AiDailyTaks/shared";
+import type { BoardConfig, GraphData, GraphEdge, GraphNode } from "@AiDailyTasks/shared";
 import { useConfig, useGraph } from "@/api/hooks";
 import { statusColor } from "@/lib/colors";
 import { useTaskDrawer } from "@/lib/navigation";

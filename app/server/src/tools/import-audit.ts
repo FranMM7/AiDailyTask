@@ -5,18 +5,18 @@
  *
  * Reads a markdown "audit" document — a status-overview table (one row per task)
  * followed by per-task detail sections, plus any sibling docs in the same folder —
- * and materializes the AiDailyTaks board: one board/C<NN>/task.md per row, sibling
+ * and materializes the AiDailyTasks board: one board/C<NN>/task.md per row, sibling
  * docs copied into each task's files/ or board/_meta/unfiled/, plus _meta narrative
  * files and an import report. STRICTLY read-only on the source folder.
  *
- * Point it at your own file with --source <path> (or the AiDailyTaks_AUDIT_SOURCE
+ * Point it at your own file with --source <path> (or the AiDailyTasks_AUDIT_SOURCE
  * env var). See docs.ts / md.ts for the expected table + section shape.
  */
 import { readFile, writeFile, mkdir, readdir } from "node:fs/promises";
 import { dirname, join, basename } from "node:path";
 import { fileURLToPath } from "node:url";
-import { padId, idNum } from "@AiDailyTaks/shared";
-import type { Category, Frontmatter, Level, Status } from "@AiDailyTaks/shared";
+import { padId, idNum } from "@AiDailyTasks/shared";
+import type { Category, Frontmatter, Level, Status } from "@AiDailyTasks/shared";
 import {
   parse,
   tables,
@@ -39,7 +39,7 @@ import { buildRelationships, type TaskText } from "./relationships";
 import { mapDocs, type DocTaskText } from "./docs";
 import { buildBody, buildTaskMd } from "./render";
 
-// Overridable via --source <path> or the AiDailyTaks_AUDIT_SOURCE env var.
+// Overridable via --source <path> or the AiDailyTasks_AUDIT_SOURCE env var.
 // Relative paths resolve against the current working directory.
 const DEFAULT_SOURCE = "import-source/audit.md";
 
@@ -69,7 +69,10 @@ interface Args {
 
 function parseArgs(argv: string[]): Args {
   let dryRun = false;
-  let source = process.env.AiDailyTaks_AUDIT_SOURCE ?? DEFAULT_SOURCE;
+  let source =
+    process.env.AiDailyTasks_AUDIT_SOURCE ??
+    process.env.AiDailyTaks_AUDIT_SOURCE ??
+    DEFAULT_SOURCE;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--dry-run") dryRun = true;
@@ -85,7 +88,8 @@ function parseArgs(argv: string[]): Args {
 }
 
 function resolveRoot(): string {
-  if (process.env.AiDailyTaks_ROOT) return process.env.AiDailyTaks_ROOT;
+  const configuredRoot = process.env.AiDailyTasks_ROOT ?? process.env.AiDailyTaks_ROOT;
+  if (configuredRoot) return configuredRoot;
   // app/server/src/tools -> ../../../.. = repo root
   const here = dirname(fileURLToPath(import.meta.url));
   return join(here, "..", "..", "..", "..");
@@ -335,7 +339,7 @@ async function main(): Promise<void> {
 
   // ── console summary ──────────────────────────────────────────────────────────
   const line = (s: string) => process.stdout.write(`${s}\n`);
-  line(`${args.dryRun ? "[DRY RUN] " : ""}AiDailyTaks audit import`);
+  line(`${args.dryRun ? "[DRY RUN] " : ""}AiDailyTasks audit import`);
   line(`  source : ${args.source}`);
   line(`  board  : ${boardDir}`);
   line(`  tasks  : ${tasks.length} (expected 56)`);
@@ -371,7 +375,7 @@ interface ReportShape {
 
 function renderReportMd(r: ReportShape): string {
   const lines: string[] = [];
-  lines.push("# AiDailyTaks import report", "");
+  lines.push("# AiDailyTasks import report", "");
   lines.push(`- Source: \`${r.generatedFrom}\``);
   lines.push(`- Dry run: ${r.dryRun}`);
   lines.push(`- Tasks created: **${r.taskCount}** (expected 56)`);

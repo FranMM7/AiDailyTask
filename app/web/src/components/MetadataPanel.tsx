@@ -10,7 +10,7 @@ import {
   type Level,
   type Status,
   type TaskDetail,
-} from "@AiDailyTaks/shared";
+} from "@AiDailyTasks/shared";
 import { useArchiveTask, useConfig, usePatchTask, useUnarchiveTask } from "@/api/hooks";
 import { toast } from "@/store/toast";
 

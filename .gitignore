@@ -16,6 +16,7 @@ board/**/*.tmp-*
 # enum/color vocabulary) stays tracked as a template; the data below does not.
 board/
 exports/
+graphs/
 projects.json
 projects.json.tmp-*
 

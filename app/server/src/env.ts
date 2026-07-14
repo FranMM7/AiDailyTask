@@ -1,8 +1,8 @@
 /**
- * Environment / path resolution for the AiDailyTaks server.
+ * Environment / path resolution for the AiDailyTasks server.
  *
- * AiDailyTaks_ROOT is the repo root that holds `board/`, `exports/` and
- * `board.config.json`. It can be overridden with the AiDailyTaks_ROOT env var;
+ * AiDailyTasks_ROOT is the repo root that holds `board/`, `exports/` and
+ * `board.config.json`. It can be overridden with the AiDailyTasks_ROOT env var;
  * otherwise it is resolved three levels up from this file
  * (app/server/src -> app/server -> app -> <root>).
  */
@@ -13,6 +13,7 @@ export interface Env {
   root: string;
   boardDir: string;
   exportsDir: string;
+  graphsDir: string;
   configPath: string;
   projectsPath: string;
   webDistDir: string;
@@ -21,7 +22,8 @@ export interface Env {
 }
 
 function resolveRoot(): string {
-  const fromEnv = process.env.AiDailyTaks_ROOT;
+  // Keep the misspelled legacy variable working for existing local setups.
+  const fromEnv = process.env.AiDailyTasks_ROOT ?? process.env.AiDailyTaks_ROOT;
   if (fromEnv && fromEnv.trim().length > 0) {
     return path.resolve(fromEnv);
   }
@@ -37,6 +39,7 @@ export function loadEnv(): Env {
     root,
     boardDir: path.join(root, "board"),
     exportsDir: path.join(root, "exports"),
+    graphsDir: path.join(root, "graphs"),
     configPath: path.join(root, "board.config.json"),
     projectsPath: path.join(root, "projects.json"),
     webDistDir: path.join(root, "app", "web", "dist"),

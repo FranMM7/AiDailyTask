@@ -13,7 +13,7 @@ import {
   LEVEL_RANK,
   type Status,
   type Level,
-} from "@AiDailyTaks/shared";
+} from "@AiDailyTasks/shared";
 import type { Env } from "./env";
 
 const EnumDefSchema = z.object({

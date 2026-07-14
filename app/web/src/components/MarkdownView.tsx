@@ -3,7 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
-import { ID_PATTERN } from "@AiDailyTaks/shared";
+import { ID_PATTERN } from "@AiDailyTasks/shared";
 import { useTaskDrawer } from "@/lib/navigation";
 
 // Allow our custom `task:` links (and keep highlight.js class names) through sanitize,

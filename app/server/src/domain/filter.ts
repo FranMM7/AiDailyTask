@@ -13,7 +13,7 @@ import {
   LEVEL_RANK,
   CATEGORIES,
   idNum,
-} from "@AiDailyTaks/shared";
+} from "@AiDailyTasks/shared";
 
 function isValid(t: TaskSummaryOrInvalid): t is TaskSummary {
   return t.valid === true;

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ClipboardEvent } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X, Upload, Trash2, FileText, Send, AlertTriangle, ImagePlus, Loader2 } from "lucide-react";
-import type { Attachment, Observation, TaskDetail } from "@AiDailyTaks/shared";
+import type { Attachment, Observation, TaskDetail } from "@AiDailyTasks/shared";
 import {
   useAddObservation,
   useDeleteAttachment,

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Approach as Role"
+  short_description: "Apply a focused engineering role lens to a task"
+  default_prompt: "Use $approach-as-role to approach this task with the requested engineering role and produce a verified, role-appropriate result."

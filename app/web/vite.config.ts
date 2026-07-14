@@ -8,7 +8,7 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      "@AiDailyTaks/shared": fileURLToPath(new URL("../shared/src/index.ts", import.meta.url)),
+      "@AiDailyTasks/shared": fileURLToPath(new URL("../shared/src/index.ts", import.meta.url)),
       "@": fileURLToPath(new URL("./src", import.meta.url)),
     },
   },

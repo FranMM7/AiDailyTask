@@ -9,7 +9,7 @@ import {
   type GraphNode,
   type GraphEdge,
   normalizeId,
-} from "@AiDailyTaks/shared";
+} from "@AiDailyTasks/shared";
 
 export function buildGraph(frontmatters: Frontmatter[]): GraphData {
   const nodes: GraphNode[] = frontmatters.map((fm) => ({

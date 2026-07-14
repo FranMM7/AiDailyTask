@@ -13,7 +13,7 @@ import {
   type Attachment,
   type TaskSummary,
   type TaskDetail,
-} from "@AiDailyTaks/shared";
+} from "@AiDailyTasks/shared";
 
 // ── Body model ───────────────────────────────────────────────────────────────
 export interface BodySection {

@@ -2,8 +2,8 @@
  * Field normalizers: category / severity / risk / status / dates.
  * Maps are exactly as specified by the import brief.
  */
-import { CATEGORIES, LEVELS, STATUSES } from "@AiDailyTaks/shared";
-import type { Category, Level, Status } from "@AiDailyTaks/shared";
+import { CATEGORIES, LEVELS, STATUSES } from "@AiDailyTasks/shared";
+import type { Category, Level, Status } from "@AiDailyTasks/shared";
 
 export interface Warning {
   id: string;

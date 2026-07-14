@@ -1,6 +1,6 @@
 import { useMemo, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
-import type { Status } from "@AiDailyTaks/shared";
+import type { Status } from "@AiDailyTasks/shared";
 import { useTasks } from "@/api/hooks";
 import { readFilter } from "@/lib/filters";
 import { TaskCard } from "@/components/TaskCard";

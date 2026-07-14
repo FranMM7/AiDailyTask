@@ -8,7 +8,7 @@ import path from "node:path";
 import type { FastifyInstance } from "fastify";
 import fastifyStatic from "@fastify/static";
 import type { Env } from "../../env";
-import type { ApiError } from "@AiDailyTaks/shared";
+import type { ApiError } from "@AiDailyTasks/shared";
 
 function notFoundEnvelope(url: string): ApiError {
   return { error: { code: "not_found", message: `No route for ${url}` } };

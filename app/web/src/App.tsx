@@ -9,6 +9,7 @@ import { Toaster } from "@/components/Toaster";
 import { BoardView } from "@/views/BoardView";
 import { TableView } from "@/views/TableView";
 import { GraphView } from "@/views/GraphView";
+import { CodeGraphView } from "@/views/CodeGraphView";
 import { BacklogView } from "@/views/BacklogView";
 import { ArchiveView } from "@/views/ArchiveView";
 import { StatsView } from "@/views/StatsView";
@@ -52,6 +53,7 @@ export default function App() {
           <Route path="/backlog" element={<BacklogView />} />
           <Route path="/table" element={<TableView />} />
           <Route path="/graph" element={<GraphView />} />
+          <Route path="/code-graph" element={<CodeGraphView />} />
           <Route path="/archive" element={<ArchiveView />} />
           <Route path="/stats" element={<StatsView />} />
           <Route path="/connect" element={<McpConfigView />} />

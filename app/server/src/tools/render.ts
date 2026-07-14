@@ -2,7 +2,7 @@
  * task.md rendering: deterministic frontmatter (fixed key order) + body.
  */
 import yaml from "js-yaml";
-import type { Frontmatter } from "@AiDailyTaks/shared";
+import type { Frontmatter } from "@AiDailyTasks/shared";
 
 /** Emit frontmatter with the exact FrontmatterSchema key order. */
 export function dumpFrontmatter(fm: Frontmatter): string {

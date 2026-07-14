@@ -90,7 +90,7 @@ async function main(): Promise<void> {
 
   try {
     await app.listen({ port: env.port, host: env.host });
-    app.log.info(`AiDailyTaks server on http://${env.host}:${env.port}  (root: ${env.root})`);
+    app.log.info(`AiDailyTasks server on http://${env.host}:${env.port}  (root: ${env.root})`);
     app.log.info(`MCP (Streamable HTTP) ready at ${mcpHttpUrl(env)}  ·  stdio: npm run mcp`);
   } catch (err) {
     app.log.error(err);

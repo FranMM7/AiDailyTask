@@ -9,8 +9,8 @@ import {
   useDroppable,
   type DragEndEvent,
 } from "@dnd-kit/core";
-import type { Status, TaskSummary, TaskSummaryOrInvalid } from "@AiDailyTaks/shared";
-import { STATUSES } from "@AiDailyTaks/shared";
+import type { Status, TaskSummary, TaskSummaryOrInvalid } from "@AiDailyTasks/shared";
+import { STATUSES } from "@AiDailyTasks/shared";
 import { useConfig, usePatchTask, useTasks } from "@/api/hooks";
 import { readFilter } from "@/lib/filters";
 import { TaskCard } from "@/components/TaskCard";

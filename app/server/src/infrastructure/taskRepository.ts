@@ -23,7 +23,7 @@ import {
   idNum,
   normalizeId,
   ID_PATTERN,
-} from "@AiDailyTaks/shared";
+} from "@AiDailyTasks/shared";
 import {
   parseTaskFile,
   serializeTaskFile,

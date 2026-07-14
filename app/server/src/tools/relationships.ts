@@ -10,7 +10,7 @@
  * Directed depends_on/blocks are stored once (A depends_on B); the inverse is
  * derived. Conflicting opposite edges are dropped (first/highest-priority wins).
  */
-import { normalizeId, padId } from "@AiDailyTaks/shared";
+import { normalizeId, padId } from "@AiDailyTasks/shared";
 import type { Cell } from "./md";
 import type { Warning } from "./normalize";
 

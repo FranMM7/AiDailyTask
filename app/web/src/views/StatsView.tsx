@@ -1,5 +1,5 @@
 import { useMemo, type ReactNode } from "react";
-import { STATUSES, type Status, type TaskSummary } from "@AiDailyTaks/shared";
+import { STATUSES, type Status, type TaskSummary } from "@AiDailyTasks/shared";
 import { useConfig, useTasks } from "@/api/hooks";
 import { statusColor, tint } from "@/lib/colors";
 

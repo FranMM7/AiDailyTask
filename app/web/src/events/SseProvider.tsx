@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import type { SseEvent, TaskSummaryOrInvalid } from "@AiDailyTaks/shared";
+import type { SseEvent, TaskSummaryOrInvalid } from "@AiDailyTasks/shared";
 import { useUiStore } from "@/store/ui";
 import type { TaskResponse, TasksResponse } from "@/api/hooks";
 
@@ -12,6 +12,7 @@ const SSE_TYPES: SseEvent["type"][] = [
   "task.invalid",
   "attachments.changed",
   "config.updated",
+  "codegraph.updated",
 ];
 
 /** Read the currently-cached rev for a task (detail first, then any summary). */
@@ -88,6 +89,10 @@ export function SseProvider({ children }: { children: ReactNode }) {
         }
         case "config.updated": {
           void qc.invalidateQueries({ queryKey: ["config"] });
+          break;
+        }
+        case "codegraph.updated": {
+          void qc.invalidateQueries({ queryKey: ["code-graph", evt.projectId] });
           break;
         }
       }

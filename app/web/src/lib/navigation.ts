@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
-import { normalizeId } from "@AiDailyTaks/shared";
+import { normalizeId } from "@AiDailyTasks/shared";
 
 /** Returns helpers to open / close the global task drawer via the ?task= param. */
 export function useTaskDrawer() {

@@ -1,6 +1,8 @@
 import type {
   Attachment,
   BoardConfig,
+  CodeGraphData,
+  CodeGraphMeta,
   ConflictResponse,
   CreateProjectRequest,
   CreateRequest,
@@ -15,7 +17,8 @@ import type {
   TaskDetailOrInvalid,
   TaskFilter,
   TaskSummaryOrInvalid,
-} from "@AiDailyTaks/shared";
+  UpdateProjectRequest,
+} from "@AiDailyTasks/shared";
 
 const BASE = "/api";
 
@@ -111,6 +114,28 @@ export function addProject(body: CreateProjectRequest): Promise<{ projects: Proj
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
+}
+
+export function updateProject(
+  id: string,
+  body: UpdateProjectRequest,
+): Promise<{ projects: ProjectDef[] }> {
+  return request<{ projects: ProjectDef[] }>(`/projects/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+export function getCodeGraph(projectId: string): Promise<CodeGraphData> {
+  return request<CodeGraphData>(`/projects/${encodeURIComponent(projectId)}/code-graph`);
+}
+
+export function generateCodeGraph(projectId: string): Promise<{ meta: CodeGraphMeta }> {
+  return request<{ meta: CodeGraphMeta }>(
+    `/projects/${encodeURIComponent(projectId)}/code-graph/generate`,
+    { method: "POST" },
+  );
 }
 
 export function getTasks(filter: TaskFilter): Promise<{ tasks: TaskSummaryOrInvalid[] }> {

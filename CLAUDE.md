@@ -1,4 +1,4 @@
-# AiDailyTaks — working conventions
+# AiDailyTasks — working conventions
 
 This is an **internal, localhost-only** task tracker that Francis and Claude co-manage. It replaces scope/tracking notes that would otherwise be scattered as loose docs across the codebase being worked on.
 
@@ -79,6 +79,7 @@ Statuses, categories, and severity/risk levels are defined once in `board.config
 - `npm run dev` — server on **http://localhost:4317** + Vite dev UI on **http://localhost:5173**.
 - `npm start` — serves the built UI + API from **http://localhost:4317** only (run `npm run build` first).
 - `npm run import:dry` / `npm run import` — (re)import tasks from a markdown "audit" document (a status table + per-task sections). Point it at your own file with `-- --source <path>`; idempotent, never modifies the source. Optional — a fresh board works without it.
-- `npm run mcp` — run the board as an **MCP server over stdio** (for a local agent). The HTTP server also exposes MCP at **http://localhost:4317/mcp** (Streamable HTTP). Tools: `list_tasks`, `get_task`, `create_task`, `update_task`, `add_observation`, `archive_task`/`unarchive_task`, `list_projects`, `add_project`, `get_config`, `get_graph`. See the README's "Connect an agent (MCP)" section.
+- `npm run share` — expose the running server over the web via an **ngrok tunnel that auto-closes after a time limit** (default 30 min). Options: `-- --minutes <n> --port <n> --auth user:pass`. Requires the ngrok CLI + an authtoken; does *not* start the server. The board has no login, so prefer `--auth` and keep the window short.
+- `npm run mcp` — run the board as an **MCP server over stdio** (for a local agent). The HTTP server also exposes MCP at **http://localhost:4317/mcp** (Streamable HTTP). Tools: `list_tasks`, `get_task`, `create_task`, `update_task`, `add_observation`, `list_attachments`, `get_attachment`, `archive_task`/`unarchive_task`, `list_projects`, `add_project`, `get_config`, `get_graph`. See the README's "Connect an agent (MCP)" section.
 
 The `board/` folder is also a valid Obsidian vault (frontmatter + `[[C26]]` wiki-links) if you want to open it there.

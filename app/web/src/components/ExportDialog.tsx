@@ -7,7 +7,7 @@ import type {
   ExportResult,
   Level,
   Status,
-} from "@AiDailyTaks/shared";
+} from "@AiDailyTasks/shared";
 import { useConfig, useExport, useExports } from "@/api/hooks";
 import { toast } from "@/store/toast";
 

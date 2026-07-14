@@ -9,7 +9,7 @@ import {
   type CreateRequest,
   type Level,
   type Status,
-} from "@AiDailyTaks/shared";
+} from "@AiDailyTasks/shared";
 import { useConfig, useCreateTask } from "@/api/hooks";
 import { useTaskDrawer } from "@/lib/navigation";
 import { toast } from "@/store/toast";

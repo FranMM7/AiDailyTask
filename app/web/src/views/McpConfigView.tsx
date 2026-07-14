@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { Check, Copy, Plug, Terminal, Globe } from "lucide-react";
-import type { McpInfo } from "@AiDailyTaks/shared";
+import type { McpInfo } from "@AiDailyTasks/shared";
 import { useMcpInfo } from "@/api/hooks";
 import { toast } from "@/store/toast";
 
