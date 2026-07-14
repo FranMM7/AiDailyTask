@@ -164,15 +164,43 @@ the MCP tools (below) to query the rest.
 
 ![Code map — a graphify view of an example project, coloured by node kind](docs/screenshots/code-map.png)
 
-**Enabling graphify.** It's a Python tool — install it once:
+**Enabling graphify.** Graphify is a separate Python tool ([`graphifyy`](https://pypi.org/project/graphifyy/)).
+The built-in scanner is the default and needs nothing installed — you only set this up if you want
+graphify's richer symbol/call graph. There are two ways to do it.
+
+*Option A — let your agent install it (as a first task).* Because the board is agent-driven, the
+simplest path is to ask your coding agent to set it up in plain language, e.g.:
+
+> "Install graphify for the code map: run `pipx install graphifyy` (fall back to
+> `pip install "graphifyy>=0.9.15"`), verify with `python -m graphify --help`, then set the
+> **my-app** project's engine to graphify and generate its code graph."
+
+The agent installs the package, flips the project's engine (`update_project` over MCP), and kicks off
+`generate_code_graph` — without you leaving the chat. (Your agent needs permission to run shell
+commands for the install step.)
+
+*Option B — install it yourself.* One-time, from any terminal:
 
 ```bash
-pipx install graphifyy            # or: pip install "graphifyy>=0.9.15"
+pipx install graphifyy                 # recommended — isolated CLI; or:
+pip install "graphifyy>=0.9.15"        # into the Python the board will call
+python -m graphify --help              # verify it runs
 ```
 
-The board invokes it as `python -m graphify` by default (override with the `GRAPHIFY_COMMAND` env var).
-Graphify runs locally in AST mode — **no API key required**. Then set a project's engine to **Graphify**
-in Manage projects and generate. The built-in scanner stays the default and needs nothing installed.
+Then open **Manage projects**, set the project's **Engine** to *Graphify*, and click **Generate graph**.
+
+**Details that matter either way:**
+
+- **Use version ≥ 0.9.15.** Older builds (e.g. `0.8.13`) demand an LLM API key *even for plain AST
+  extraction*; 0.9.15+ runs fully offline. If `pip` resolves an old version, pin it explicitly:
+  `pip install "graphifyy>=0.9.15"`.
+- **No API key, nothing leaves your machine.** The board always runs graphify in local AST mode
+  (`extract --code-only`), so it uses Tree-sitter only — no LLM backend required.
+- **How the board calls it.** By default it runs `python -m graphify` (the `graphify` script isn't
+  always on `PATH`, especially on Windows). If your install exposes it differently, set the
+  `GRAPHIFY_COMMAND` env var before starting the server — e.g. `GRAPHIFY_COMMAND="graphify"` or a full
+  path to the executable.
+- **Python 3 is required** on the machine running the board.
 
 **For agents.** The real win is letting an agent *query* the graph instead of re-reading the codebase —
 `query_code_graph` (a file/symbol's dependencies, dependents, or call graph) and, with graphify, the
