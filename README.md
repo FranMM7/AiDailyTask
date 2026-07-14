@@ -55,6 +55,10 @@ missing when all I had was a chat window and a giant text file.
 - **Table, Backlog, Archive** views — sortable table, a parked-work backlog, and restorable archive.
 - **Dependency graph** — tasks link via `depends_on` / `blocks` / `relates_to` / `parent`, rendered
   as an auto-laid-out graph so you can see the shape of the work.
+- **Code map** — point a project at its source tree and turn it into a dependency/call graph
+  (a fast built-in scanner, or the richer [graphify](https://github.com/safishamsi/graphify) engine),
+  stored git-ignored and queryable by your agent over MCP so it can navigate a codebase by structure
+  instead of re-reading every file.
 - **Stats** — cycle time, throughput, and how long things sit open.
 - **Rich task detail** — Markdown summary + scope, a timestamped observations log, and attachments
   (paste a screenshot straight into a note and it's saved and embedded).
@@ -129,9 +133,51 @@ database.
 ### Create a project
 
 Click the **＋** next to the project picker in the top bar, type a name, and confirm. Projects are
-stored in the local, git-ignored `projects.json` (`[{ "id", "label" }]`); you can also edit that file
-by hand and the browser refreshes live. Switch the active project from the same picker (or **All
-projects**), and it scopes every view and filter.
+stored in the local, git-ignored `projects.json` (`[{ "id", "label", "root?", "indexer?" }]`); you can
+also edit that file by hand and the browser refreshes live. Switch the active project from the same
+picker (or **All projects**), and it scopes every view and filter.
+
+### Map a project's code (Code map)
+
+The **Code map** turns a project's *source tree* into a queryable dependency graph — so you (and your
+agent) can see how a codebase fits together without opening every file. It's generated on demand and
+stored **git-ignored** under `graphs/<project>/`, so the mapped project's code never lands in this repo.
+
+**Set it up.** Open **Manage projects** (the folder-gear button next to the project picker). For each
+project you can edit its label, its **source path** (the absolute path to that codebase on disk), and
+its **engine**, then click **Generate graph**. Indexing runs in the background — large repos take a
+while, and the view updates live when it's done.
+
+![Manage projects — set a source path + engine, then generate a code graph](docs/screenshots/manage-projects.png)
+
+Two engines emit the same normalized graph:
+
+- **Built-in** (default) — a fast, parser-free scanner. One node per file; edges for
+  `import` / `require` / `using`. No toolchain to install; understands JS/TS, Python, and C#/.NET.
+- **Graphify** — the richer [graphify](https://github.com/safishamsi/graphify) engine: nodes for
+  **files, namespaces, classes, functions and methods**, and edges for **imports, containment, and
+  calls** (a real call graph). Opt-in per project.
+
+Open the **Code map** view to explore it — nodes coloured by kind, a relation legend, and a **Files
+only** toggle to collapse to the file level. Very large graphs render the most-connected slice; use
+the MCP tools (below) to query the rest.
+
+![Code map — a graphify view of an example project, coloured by node kind](docs/screenshots/code-map.png)
+
+**Enabling graphify.** It's a Python tool — install it once:
+
+```bash
+pipx install graphifyy            # or: pip install "graphifyy>=0.9.15"
+```
+
+The board invokes it as `python -m graphify` by default (override with the `GRAPHIFY_COMMAND` env var).
+Graphify runs locally in AST mode — **no API key required**. Then set a project's engine to **Graphify**
+in Manage projects and generate. The built-in scanner stays the default and needs nothing installed.
+
+**For agents.** The real win is letting an agent *query* the graph instead of re-reading the codebase —
+`query_code_graph` (a file/symbol's dependencies, dependents, or call graph) and, with graphify, the
+native `graphify_query` / `graphify_affected` / `graphify_explain` / `graphify_path` tools. See
+[Connect any AI agent (MCP)](#connect-any-ai-agent-mcp).
 
 ### Find things
 
@@ -195,8 +241,15 @@ app/web/               React + Vite + TypeScript frontend
 
 AiDailyTasks is also an **MCP server**, so an agent gets structured tools — `list_tasks`, `get_task`,
 `create_task`, `update_task`, `add_observation`, `list_attachments`, `get_attachment`,
-`archive_task` / `unarchive_task`, `list_projects`, `add_project`, `get_config`, `get_graph` — over
-either transport.
+`archive_task` / `unarchive_task`, `list_projects`, `add_project`, `update_project`, `get_config`,
+`get_graph` — over either transport.
+
+It also exposes the **Code map** to agents: `generate_code_graph`, `get_code_graph` (status +
+overview), and `query_code_graph` (a file or symbol's dependencies/dependents, filtered by relation —
+e.g. the call graph). When a project uses the graphify engine, graphify's own commands are available
+too: `graphify_query` (natural-language question over the knowledge graph), `graphify_affected`
+(blast radius), `graphify_explain`, and `graphify_path`. So an agent can ask *"what calls this?"* or
+*"how does auth work?"* and get an answer from the graph instead of re-reading the repo.
 
 Because it's built on the open [Model Context Protocol](https://modelcontextprotocol.io) **and** on
 plain files, it isn't tied to any one assistant: MCP-capable agents (Claude, and other MCP clients)
