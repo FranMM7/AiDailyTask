@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ClipboardEvent } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { X, Upload, Trash2, FileText, Send, AlertTriangle, ImagePlus, Loader2 } from "lucide-react";
+import { X, Upload, Trash2, FileText, Send, AlertTriangle, ImagePlus, Loader2, ExternalLink } from "lucide-react";
 import type { Attachment, Observation, TaskDetail } from "@AiDailyTasks/shared";
 import {
   useAddObservation,
@@ -30,6 +30,10 @@ function extForImage(mime: string): string {
 
 function isImage(mime: string): boolean {
   return mime.startsWith("image/");
+}
+
+function isMarkdown(attachment: Attachment): boolean {
+  return attachment.mime === "text/markdown" || /\.(?:md|markdown)$/i.test(attachment.name);
 }
 
 function fmtWhen(iso: string): string {
@@ -170,11 +174,82 @@ function ObservationsSection({ task }: { task: TaskDetail }) {
   );
 }
 
+function MarkdownAttachmentPreview({ attachment, onClose }: { attachment: Attachment; onClose: () => void }) {
+  const [markdown, setMarkdown] = useState<string | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setMarkdown(null);
+    setError(false);
+
+    void fetch(attachment.url, { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.text();
+      })
+      .then(setMarkdown)
+      .catch((cause: unknown) => {
+        if (cause instanceof DOMException && cause.name === "AbortError") return;
+        setError(true);
+      });
+
+    return () => controller.abort();
+  }, [attachment.url]);
+
+  return (
+    <Dialog.Root open onOpenChange={(open) => (!open ? onClose() : undefined)}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/60 data-[state=open]:animate-in" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-[70] flex h-[70vh] min-h-80 w-[min(760px,calc(100vw-2rem))] min-w-80 max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 resize flex-col overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-900 shadow-2xl outline-none dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100">
+          <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
+            <Dialog.Title className="min-w-0 truncate text-sm font-semibold" title={attachment.name}>
+              {attachment.name}
+            </Dialog.Title>
+            <Dialog.Description className="sr-only">Markdown attachment preview</Dialog.Description>
+            <div className="flex shrink-0 items-center gap-3">
+              <a
+                href={attachment.url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline dark:text-blue-400"
+              >
+                <ExternalLink size={12} />
+                Open original
+              </a>
+              <Dialog.Close
+                className="rounded p-1 text-slate-500 hover:bg-slate-200 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+                title="Close preview"
+                aria-label={`Close preview of ${attachment.name}`}
+              >
+                <X size={16} />
+              </Dialog.Close>
+            </div>
+          </div>
+          <div className="min-h-40 overflow-auto p-5">
+            {error ? (
+              <p className="text-sm text-red-600 dark:text-red-400">Couldn&apos;t load this Markdown attachment.</p>
+            ) : markdown !== null ? (
+              <MarkdownView markdown={markdown} />
+            ) : (
+              <div className="flex items-center gap-2 text-sm text-slate-500">
+                <Loader2 size={14} className="animate-spin" />
+                Loading preview…
+              </div>
+            )}
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
 function AttachmentsSection({ task }: { task: TaskDetail }) {
   const upload = useUploadAttachments();
   const del = useDeleteAttachment();
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [preview, setPreview] = useState<Attachment | null>(null);
 
   const doUpload = (files: FileList | null) => {
     if (!files || files.length === 0) return;
@@ -192,13 +267,26 @@ function AttachmentsSection({ task }: { task: TaskDetail }) {
               key={a.name}
               className="group relative overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800"
             >
-              <a
-                href={a.url}
-                target="_blank"
-                rel="noreferrer"
-                className="block"
-                title={`${a.name} (${Math.round(a.size / 1024)} KB)`}
-              >
+              {isMarkdown(a) ? (
+                <button
+                  type="button"
+                  onClick={() => setPreview(a)}
+                  className="block w-full text-left"
+                  title={`Preview ${a.name} (${Math.round(a.size / 1024)} KB)`}
+                >
+                  <div className="flex h-24 w-full flex-col items-center justify-center gap-1 bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700">
+                    <FileText size={22} />
+                    <span className="px-1 text-[10px]">Markdown</span>
+                  </div>
+                </button>
+              ) : (
+                <a
+                  href={a.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="block"
+                  title={`${a.name} (${Math.round(a.size / 1024)} KB)`}
+                >
                 {isImage(a.mime) ? (
                   <img src={a.url} alt={a.name} className="h-24 w-full object-cover" />
                 ) : (
@@ -207,12 +295,16 @@ function AttachmentsSection({ task }: { task: TaskDetail }) {
                     <span className="px-1 text-[10px]">{a.mime || "file"}</span>
                   </div>
                 )}
-              </a>
+                </a>
+              )}
               <div className="flex items-center justify-between gap-1 px-1.5 py-1">
                 <span className="truncate text-[11px]">{a.name}</span>
                 <button
                   type="button"
-                  onClick={() => del.mutate({ id: task.id, name: a.name })}
+                  onClick={() => {
+                    if (preview?.name === a.name) setPreview(null);
+                    del.mutate({ id: task.id, name: a.name });
+                  }}
                   className="text-slate-400 hover:text-red-500"
                   title="Delete attachment"
                 >
@@ -223,6 +315,8 @@ function AttachmentsSection({ task }: { task: TaskDetail }) {
           ))}
         </div>
       )}
+
+      {preview ? <MarkdownAttachmentPreview attachment={preview} onClose={() => setPreview(null)} /> : null}
 
       <div
         onDragOver={(e) => {
