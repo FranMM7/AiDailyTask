@@ -126,27 +126,24 @@ export class FsTaskRepository {
 
   async listSummaries(): Promise<TaskSummaryOrInvalid[]> {
     const ids = await this.listIds();
-    const out: TaskSummaryOrInvalid[] = [];
-    for (const id of ids) {
-      out.push(await this.readSummary(id));
-    }
-    return out;
+    // Task files are independent. Reading them serially made list_tasks scale with
+    // every file/attachment stat and caused multi-second cold spikes on Windows.
+    return Promise.all(ids.map((id) => this.readSummary(id)));
   }
 
   /** All valid frontmatters (for graph building); invalid tasks are skipped. */
   async listFrontmatters(): Promise<Frontmatter[]> {
     const ids = await this.listIds();
-    const out: Frontmatter[] = [];
-    for (const id of ids) {
+    const rows = await Promise.all(ids.map(async (id): Promise<Frontmatter | null> => {
       try {
         const raw = await fs.readFile(this.taskFile(id), "utf8");
         const parsed = parseTaskFile(raw);
-        if (parsed.ok) out.push({ ...parsed.frontmatter, id: normalizeId(id) });
+        return parsed.ok ? { ...parsed.frontmatter, id: normalizeId(id) } : null;
       } catch {
-        /* skip */
+        return null;
       }
-    }
-    return out;
+    }));
+    return rows.filter((row): row is Frontmatter => row !== null);
   }
 
   private async readSummary(id: string): Promise<TaskSummaryOrInvalid> {

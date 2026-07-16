@@ -24,3 +24,12 @@ Keep new plans and design notes in the task body or `board/<ID>/files/`; do not 
 ## Execute safely
 
 Inspect the working tree before editing and preserve unrelated changes. Prefer vertical slices that are independently demonstrable. Review the diff for unintended edits. Report the task ID, new status, verification result, and any remaining risk.
+
+## Recover MCP context
+
+When MCP is missing or stale, check `http://127.0.0.1:4317/api/mcp-health` out-of-band. Connection
+refused means the HTTP app is not running; healthy status with stale tools means the agent must
+disconnect/reconnect or restart so `.mcp.json` and tool schemas reload. Prefer the **Connect** tab's
+direct-TSX stdio config. Never claim queued board writes succeeded: after reconnecting, re-read the
+task/project, apply the queued change, and verify it with a read-back. An MCP tool cannot restart its
+own unavailable transport.

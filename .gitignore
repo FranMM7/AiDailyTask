@@ -23,4 +23,5 @@ projects.json.tmp-*
 
 # Per-machine agent settings (local permission allowlists — not shared)
 **/settings.local.json
+.mcp.json
 import-source/

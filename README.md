@@ -130,12 +130,39 @@ database.
 
 ![The task detail drawer — summary, scope, observations, attachments, and editable metadata](docs/screenshots/task-drawer.png)
 
-### Create a project
+### Create and document a project
 
-Click the **＋** next to the project picker in the top bar, type a name, and confirm. Projects are
-stored in the local, git-ignored `projects.json` (`[{ "id", "label", "root?", "indexer?" }]`); you can
-also edit that file by hand and the browser refreshes live. Switch the active project from the same
-picker (or **All projects**), and it scopes every view and filter.
+Use the **Projects** workspace to connect the board to each codebase and give both people and agents
+one maintained source of project context.
+
+1. Click the **＋** button beside the project picker to add a project and, optionally, its local
+   source path.
+2. Open the **Projects** tab in the main navigation.
+3. Select **Open project context** on the project you want to configure. The project picker remains a
+   separate task-view filter; it does not open project settings.
+
+![Projects tab showing the project cards and Open project context action](docs/screenshots/projects-overview.png)
+
+The project workspace groups the user-facing tools for that codebase:
+
+- **Agent and project instructions:** record build commands, architecture notes, conventions, and
+  safety constraints in Markdown. Click **Save instructions** to make that guidance available to
+  connected agents.
+- **Project settings:** update the display label, absolute local source path, and code-graph engine,
+  then click **Save project**.
+- **Generate code graph:** scan the configured source path so the **Code map** and connected agents
+  can inspect project structure and dependencies.
+- **Import README / Refresh README:** copy the source repository's root README into this private
+  workspace, or refresh the snapshot after its documentation changes.
+
+![Project workspace with source settings, agent instructions, and imported README documentation](docs/screenshots/project-workspace.png)
+
+Project instructions and imported README snapshots live under git-ignored
+`project-docs/<project-id>/`. They remain local to AiDailyTasks and never modify the source
+repository.
+
+Agents can maintain the same context through `get_project`, `update_project_documentation`,
+`import_project_readme`, and `refresh_code_graph`.
 
 ### Map a project's code (Code map)
 
@@ -143,12 +170,9 @@ The **Code map** turns a project's *source tree* into a queryable dependency gra
 agent) can see how a codebase fits together without opening every file. It's generated on demand and
 stored **git-ignored** under `graphs/<project>/`, so the mapped project's code never lands in this repo.
 
-**Set it up.** Open **Manage projects** (the folder-gear button next to the project picker). For each
-project you can edit its label, its **source path** (the absolute path to that codebase on disk), and
-its **engine**, then click **Generate graph**. Indexing runs in the background — large repos take a
-while, and the view updates live when it's done.
-
-![Manage projects — set a source path + engine, then generate a code graph](docs/screenshots/manage-projects.png)
+**Set it up.** Open **Projects**, select a project, set its **source path** (the absolute path to that
+codebase on disk) and **engine**, save, then click **Generate code graph**. Indexing runs in the
+background — large repos take a while, and the view updates live when it's done.
 
 Two engines emit the same normalized graph:
 
@@ -187,7 +211,8 @@ pip install "graphifyy>=0.9.15"        # into the Python the board will call
 python -m graphify --help              # verify it runs
 ```
 
-Then open **Manage projects**, set the project's **Engine** to *Graphify*, and click **Generate graph**.
+Then open **Projects**, select the project, set **Code graph engine** to *Graphify*, and click
+**Generate code graph**.
 
 **Details that matter either way:**
 
@@ -255,6 +280,7 @@ board/<ID>/files/      that task's attachments (logs, screenshots, docs)   [git-
 board/_meta/           overview / relationships / import report            [git-ignored — private]
 exports/               generated Markdown exports                          [git-ignored — private]
 projects.json          your project list ({id,label}) — add via the UI     [git-ignored — private]
+project-docs/<project>/ agent instructions + imported README snapshots      [git-ignored — private]
 board.config.json      the vocabulary (statuses, categories, colors) — tracked template
 app/shared/            zod contract + shared TypeScript types (server + web)
 app/server/            Fastify + TypeScript API, file watcher, MCP server, importer
@@ -267,10 +293,10 @@ app/web/               React + Vite + TypeScript frontend
 
 ## Connect any AI agent (MCP)
 
-AiDailyTasks is also an **MCP server**, so an agent gets structured tools — `list_tasks`, `get_task`,
-`create_task`, `update_task`, `add_observation`, `list_attachments`, `get_attachment`,
-`archive_task` / `unarchive_task`, `list_projects`, `add_project`, `update_project`, `get_config`,
-`get_graph` — over either transport.
+AiDailyTasks is also an **MCP server**, so an agent gets structured tools for task CRUD, observations,
+attachment upload/read/delete, archive/restore, project metadata and documentation, and graphs.
+Project-context tools include `get_project`, `add_project`, `update_project`,
+`get_project_documentation`, `update_project_documentation`, and `import_project_readme`.
 
 It also exposes the **Code map** to agents: `generate_code_graph`, `get_code_graph` (status +
 overview), and `query_code_graph` (a file or symbol's dependencies/dependents, filtered by relation —
@@ -294,19 +320,48 @@ Point any Streamable-HTTP MCP client at:
 http://127.0.0.1:4317/mcp
 ```
 
-**Option B — stdio (the agent spawns it, no HTTP server needed).** Example client config
-(`.mcp.json`, `claude_desktop_config.json`, or equivalent):
+**Option B — stdio (recommended for coding agents).** The agent spawns it, so no already-running
+HTTP server is required. Open **Connect** and copy its generated machine-specific configuration; it
+launches TSX directly to avoid npm cold-start delay. A Windows example is:
 
 ```jsonc
 {
   "mcpServers": {
-    "AiDailyTasks": { "command": "npm", "args": ["run", "mcp"], "cwd": "/absolute/path/to/AiDailyTasks" }
+    "AiDailyTasks": {
+      "command": "C:\\Code\\AiDailyTasks\\node_modules\\.bin\\tsx.cmd",
+      "args": ["src/mcp.ts"],
+      "cwd": "C:\\Code\\AiDailyTasks\\app\\server"
+    }
   }
 }
 ```
 
 Or run it directly with `npm run mcp`. Either path edits the same `board/` files with the same
 optimistic-concurrency + atomic writes as the web UI, so the browser updates live.
+
+### Diagnose "MCP unavailable" or stale tools
+
+First distinguish server health from a stale client session:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:4317/api/mcp-health
+```
+
+(`curl http://127.0.0.1:4317/api/mcp-health` works in other shells.) A healthy response reports the
+tool count, active sessions, session limit, PID, and uptime.
+
+- **HTTP connection refused:** start/restart AiDailyTasks with `npm run dev` or `npm start`.
+- **Health is OK but the agent says stale/unavailable:** disconnect/reconnect MCP or restart that
+  agent session; its configuration and tool schemas were cached at session start.
+- **You just edited `.mcp.json`:** it is not hot-loaded. Restart/reconnect before flushing queued MCP
+  writes.
+- **Stdio startup trouble:** recopy the current direct-TSX configuration from **Connect**.
+- **Invalid HTTP session:** reconnect instead of retrying forever. The server returns promptly and
+  cleans abandoned sessions after two idle hours.
+
+An MCP tool cannot safely restart its own unavailable transport. Recovery must happen through the
+agent host's reconnect action or an out-of-band shell command. Do not claim queued observations were
+written until `get_task` confirms them after reconnecting.
 
 **Once it's connected**, you don't call the tools by hand — just ask your agent in plain language,
 e.g. *"add a Bug task for the flaky upload retry, high severity,"* *"move C12 to In progress and note

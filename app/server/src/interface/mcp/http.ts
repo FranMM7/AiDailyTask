@@ -9,6 +9,7 @@
  * session gets its own McpServer + transport, kept in `transports` until closed.
  */
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
@@ -23,17 +24,57 @@ export function mcpHttpUrl(env: Env): string {
 }
 
 export function registerMcpHttp(app: FastifyInstance, services: Services, env: Env): void {
-  const transports = new Map<string, StreamableHTTPServerTransport>();
+  interface SessionEntry {
+    transport: StreamableHTTPServerTransport;
+    lastActivity: number;
+    openStreams: number;
+  }
+  const transports = new Map<string, SessionEntry>();
+  const SESSION_IDLE_MS = 2 * 60 * 60 * 1000;
+  const MAX_SESSIONS = 100;
+
+  const closeSession = async (id: string, entry: SessionEntry): Promise<void> => {
+    transports.delete(id);
+    await entry.transport.close().catch(() => {});
+  };
+  const reapSessions = (): void => {
+    const now = Date.now();
+    const idle = [...transports.entries()]
+      .filter(([, entry]) => entry.openStreams === 0 && now - entry.lastActivity > SESSION_IDLE_MS)
+      .sort((a, b) => a[1].lastActivity - b[1].lastActivity);
+    for (const [id, entry] of idle) void closeSession(id, entry);
+  };
+  const sessionReaper = setInterval(reapSessions, 60_000);
+  sessionReaper.unref();
 
   // Connection details for the in-app Connect page (copy-paste configs).
   app.get("/api/mcp-info", async (_req, reply) => {
     const info: McpInfo = {
       serverName: "AiDailyTasks",
       http: { url: mcpHttpUrl(env) },
-      stdio: { command: "npm", args: ["run", "mcp"], cwd: env.root },
+      stdio: {
+        command: path.join(env.root, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx"),
+        args: ["src/mcp.ts"],
+        cwd: path.join(env.root, "app", "server"),
+      },
       tools: MCP_TOOL_SUMMARY,
     };
     reply.send(info);
+  });
+
+  app.get("/api/mcp-health", async (_req, reply) => {
+    reply.send({
+      status: "ok",
+      transport: "streamable-http",
+      endpoint: mcpHttpUrl(env),
+      activeSessions: transports.size,
+      sessionLimit: MAX_SESSIONS,
+      sessionIdleTimeoutSeconds: SESSION_IDLE_MS / 1000,
+      toolCount: MCP_TOOL_SUMMARY.length,
+      pid: process.pid,
+      uptimeSeconds: Math.round(process.uptime()),
+      timestamp: new Date().toISOString(),
+    });
   });
 
   const sendJsonError = (reply: FastifyReply, code: number, httpStatus: number, message: string): void => {
@@ -45,18 +86,25 @@ export function registerMcpHttp(app: FastifyInstance, services: Services, env: E
     reply.hijack(); // the transport owns the raw response
     try {
       const sessionId = req.headers["mcp-session-id"] as string | undefined;
-      let transport = sessionId ? transports.get(sessionId) : undefined;
+      let entry = sessionId ? transports.get(sessionId) : undefined;
+      let transport = entry?.transport;
 
       if (!transport) {
         if (sessionId || !isInitializeRequest(req.body)) {
           sendJsonError(reply, -32000, 400, "No valid session — send an initialize request first.");
           return;
         }
+        reapSessions();
+        if (transports.size >= MAX_SESSIONS) {
+          sendJsonError(reply, -32000, 503, "MCP session limit reached — retry after closing an existing session.");
+          return;
+        }
         // New session: mint an id, register on init, clean up on close.
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (sid) => {
-            transports.set(sid, transport as StreamableHTTPServerTransport);
+            entry = { transport: transport as StreamableHTTPServerTransport, lastActivity: Date.now(), openStreams: 0 };
+            transports.set(sid, entry);
           },
         });
         transport.onclose = () => {
@@ -65,6 +113,7 @@ export function registerMcpHttp(app: FastifyInstance, services: Services, env: E
         const server = buildMcpServer(services);
         await server.connect(transport);
       }
+      if (entry) entry.lastActivity = Date.now();
       await transport.handleRequest(req.raw, reply.raw, req.body);
     } catch (err) {
       app.log.error({ err }, "MCP POST failed");
@@ -76,12 +125,22 @@ export function registerMcpHttp(app: FastifyInstance, services: Services, env: E
   const handleSession = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     reply.hijack();
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
-    const transport = sessionId ? transports.get(sessionId) : undefined;
-    if (!transport) {
+    const entry = sessionId ? transports.get(sessionId) : undefined;
+    if (!entry) {
       sendJsonError(reply, -32000, 400, "Invalid or missing mcp-session-id.");
       return;
     }
-    await transport.handleRequest(req.raw, reply.raw);
+    entry.lastActivity = Date.now();
+    if (req.method === "GET") entry.openStreams += 1;
+    try {
+      await entry.transport.handleRequest(req.raw, reply.raw);
+      if (req.method === "DELETE" && sessionId) transports.delete(sessionId);
+    } finally {
+      if (req.method === "GET") {
+        entry.openStreams = Math.max(0, entry.openStreams - 1);
+        entry.lastActivity = Date.now();
+      }
+    }
   };
   app.get("/mcp", handleSession);
   app.delete("/mcp", handleSession);

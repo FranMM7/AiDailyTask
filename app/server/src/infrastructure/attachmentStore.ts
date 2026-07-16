@@ -68,23 +68,23 @@ export class AttachmentStore {
     } catch {
       return [];
     }
-    const out: Attachment[] = [];
-    for (const name of names) {
+    const rows = await Promise.all(names.map(async (name): Promise<Attachment | null> => {
       const abs = path.join(dir, name);
       try {
         const st = await fs.stat(abs);
-        if (!st.isFile()) continue;
-        out.push({
+        if (!st.isFile()) return null;
+        return {
           name,
           size: st.size,
           mime: this.mimeOf(name),
           modified: new Date(st.mtimeMs).toISOString(),
           url: this.urlFor(id, name),
-        });
+        };
       } catch {
-        /* skip vanished file */
+        return null; // skip vanished file
       }
-    }
+    }));
+    const out = rows.filter((row): row is Attachment => row !== null);
     out.sort((a, b) => a.name.localeCompare(b.name));
     return out;
   }

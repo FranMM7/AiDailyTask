@@ -30,10 +30,20 @@ import type { EventBus } from "../infrastructure/eventBus";
 import type { Env } from "../env";
 
 export class TaskService {
+  private summariesInFlight: Promise<TaskSummaryOrInvalid[]> | null = null;
+
   constructor(private readonly repo: FsTaskRepository) {}
 
   async list(filter: TaskFilter): Promise<TaskSummaryOrInvalid[]> {
-    const all = await this.repo.listSummaries();
+    // Collapse overlapping board/MCP list requests into one filesystem scan. This
+    // matters when several agent calls arrive together on Windows: without it each
+    // request independently stats every task and attachment.
+    if (!this.summariesInFlight) {
+      this.summariesInFlight = this.repo.listSummaries().finally(() => {
+        this.summariesInFlight = null;
+      });
+    }
+    const all = await this.summariesInFlight;
     return applyFilter(all, filter);
   }
 
