@@ -14,6 +14,7 @@ import { BacklogView } from "@/views/BacklogView";
 import { ArchiveView } from "@/views/ArchiveView";
 import { StatsView } from "@/views/StatsView";
 import { McpConfigView } from "@/views/McpConfigView";
+import { ProjectsView } from "@/views/ProjectsView";
 
 function NotFound() {
   return (
@@ -57,6 +58,8 @@ export default function App() {
           <Route path="/archive" element={<ArchiveView />} />
           <Route path="/stats" element={<StatsView />} />
           <Route path="/connect" element={<McpConfigView />} />
+          <Route path="/projects" element={<ProjectsView />} />
+          <Route path="/projects/:projectId" element={<ProjectsView />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>

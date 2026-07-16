@@ -63,17 +63,25 @@ export const MCP_TOOL_SUMMARY: { name: string; description: string }[] = [
   { name: "get_task", description: "Read one task in full (frontmatter, summary, scope, observations)." },
   { name: "create_task", description: "Create a task; the id is auto-assigned." },
   { name: "update_task", description: "Patch a task's fields and/or summary/scope." },
+  { name: "delete_task", description: "Permanently delete an archived task after revision confirmation." },
   { name: "add_observation", description: "Append a timestamped note to a task's Observations log." },
   { name: "list_attachments", description: "List the files attached to a task (name, size, mime, url)." },
   { name: "get_attachment", description: "Fetch one of a task's attachments by filename (image/text/base64)." },
+  { name: "upload_attachment", description: "Upload a text or base64 file to a task." },
+  { name: "delete_attachment", description: "Permanently delete one attachment from a task." },
   { name: "archive_task", description: "Archive a task (hide from the board)." },
   { name: "unarchive_task", description: "Restore an archived task." },
   { name: "list_projects", description: "List configured projects (id, label, source root)." },
+  { name: "get_project", description: "Read one project's metadata, documentation, and code-graph status." },
   { name: "add_project", description: "Add a project to the local projects.json (optional source root)." },
   { name: "update_project", description: "Edit a project's label and/or source root path." },
+  { name: "get_project_documentation", description: "Get project details, agent instructions, and imported README." },
+  { name: "update_project_documentation", description: "Save project-specific Markdown instructions for people and agents." },
+  { name: "import_project_readme", description: "Copy a project's root README into its private documentation store." },
   { name: "get_config", description: "Board vocabulary: statuses, categories, severities, risks, projects." },
   { name: "get_graph", description: "Task relationship graph (depends_on / blocks / relates_to / parent)." },
   { name: "generate_code_graph", description: "Build/refresh a project's code graph (async; built-in or graphify per project)." },
+  { name: "refresh_code_graph", description: "Explicitly rebuild a project's current built-in or Graphify index." },
   { name: "get_code_graph", description: "Code-graph status + overview (hubs, folders, kinds); set full=true for all nodes/edges." },
   { name: "query_code_graph", description: "A file/symbol's dependencies/dependents (kind + relation aware) — avoids re-reading the repo." },
   { name: "graphify_query", description: "Natural-language question answered from the graphify knowledge graph (needs graphify indexer)." },
@@ -240,14 +248,72 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
     },
   );
 
+  server.registerTool(
+    "upload_attachment",
+    {
+      title: "Upload attachment",
+      description:
+        "Attach one file to a task. Provide exactly one of `text` (UTF-8 content) or `base64` (binary content). " +
+        "The server sanitizes and de-duplicates the filename.",
+      inputSchema: {
+        id: z.string().describe("Task id, e.g. C09"),
+        filename: z.string().min(1),
+        text: z.string().optional().describe("UTF-8 text file content"),
+        base64: z.string().optional().describe("Base64-encoded binary file content"),
+      },
+    },
+    async ({ id, filename, text, base64 }) => {
+      if ((text === undefined) === (base64 === undefined)) {
+        return fail("Provide exactly one of text or base64.");
+      }
+      let data: Buffer;
+      try {
+        data = text !== undefined ? Buffer.from(text, "utf8") : Buffer.from(base64!, "base64");
+      } catch (err) {
+        return fail(`Invalid attachment content: ${(err as Error).message}`);
+      }
+      if (data.byteLength > MAX_ATTACHMENT_BYTES) {
+        return fail(`Attachment is over the ${MAX_ATTACHMENT_BYTES}-byte MCP upload limit.`);
+      }
+      try {
+        const attachments = await services.attachments.saveMany(id, [{ filename, data }]);
+        return ok({ id: normalizeId(id), attachment: attachments[0] });
+      } catch (err) {
+        return fail(`Cannot upload attachment to ${id}: ${(err as Error).message}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "delete_attachment",
+    {
+      title: "Delete attachment",
+      description: "Permanently delete one task attachment by its exact filename.",
+      inputSchema: {
+        id: z.string().describe("Task id, e.g. C09"),
+        name: z.string().min(1).describe("Exact filename returned by list_attachments"),
+        confirm: z.literal(true).describe("Must be true because this cannot be undone"),
+      },
+    },
+    async ({ id, name }) => {
+      try {
+        await services.attachments.delete(id, name);
+        return ok({ id: normalizeId(id), deleted: name });
+      } catch (err) {
+        return fail(`Cannot delete attachment ${name} from ${id}: ${(err as Error).message}`);
+      }
+    },
+  );
+
   // ── Write: tasks ─────────────────────────────────────────────────────────────
   server.registerTool(
     "create_task",
     {
       title: "Create task",
       description:
-        "Create a task. The id is auto-assigned (next available). Only title and category are required.",
+        "Create a task. The id is auto-assigned unless an available explicit id is provided. Only title and category are required.",
       inputSchema: {
+        id: z.string().optional().describe("Optional explicit task id, e.g. C99"),
         title: z.string().min(1),
         category: z.enum(CATEGORIES),
         project: z.string().optional(),
@@ -339,6 +405,30 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
   );
 
   server.registerTool(
+    "delete_task",
+    {
+      title: "Delete task permanently",
+      description:
+        "Permanently delete a task and all of its attachments. The task must already be archived; " +
+        "pass its current revision and confirm=true. This cannot be undone.",
+      inputSchema: {
+        id: z.string(),
+        baseRev: z.number().describe("Exact current revision returned by get_task"),
+        confirm: z.literal(true),
+      },
+    },
+    async ({ id, baseRev }) => {
+      try {
+        const res = await services.tasks.delete(id, baseRev);
+        if (res.conflict) return fail(CONFLICT_MSG);
+        return ok({ id: res.id, deleted: true });
+      } catch (err) {
+        return fail(`Cannot delete task ${id}: ${(err as Error).message}`);
+      }
+    },
+  );
+
+  server.registerTool(
     "archive_task",
     {
       title: "Archive task",
@@ -371,6 +461,24 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
     "list_projects",
     { title: "List projects", description: "List configured projects." },
     async () => ok({ projects: services.projects.list() }),
+  );
+
+  server.registerTool(
+    "get_project",
+    {
+      title: "Get project",
+      description: "Read one project's metadata, agent instructions, imported README, and current code-graph status.",
+      inputSchema: { project: z.string().min(1) },
+    },
+    async ({ project }) => {
+      try {
+        const documentation = await services.projectDocumentation.get(project);
+        const graph = await services.codeGraph.getGraph(project);
+        return ok({ ...documentation, codeGraph: graph.meta });
+      } catch (err) {
+        return fail(`Cannot read project ${project}: ${(err as Error).message}`);
+      }
+    },
   );
 
   server.registerTool(
@@ -434,6 +542,45 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
   );
 
   server.registerTool(
+    "get_project_documentation",
+    {
+      title: "Get project documentation",
+      description: "Get a project's configuration, maintained agent instructions, and the last imported README.",
+      inputSchema: { project: z.string().min(1) },
+    },
+    async ({ project }) => {
+      try { return ok(await services.projectDocumentation.get(project)); }
+      catch (err) { return fail(`Cannot read documentation for ${project}: ${(err as Error).message}`); }
+    },
+  );
+
+  server.registerTool(
+    "update_project_documentation",
+    {
+      title: "Update project documentation",
+      description: "Replace the project-specific Markdown instructions agents should follow when working on this project.",
+      inputSchema: { project: z.string().min(1), instructions: z.string().max(500_000) },
+    },
+    async ({ project, instructions }) => {
+      try { return ok(await services.projectDocumentation.update(project, instructions)); }
+      catch (err) { return fail(`Cannot update documentation for ${project}: ${(err as Error).message}`); }
+    },
+  );
+
+  server.registerTool(
+    "import_project_readme",
+    {
+      title: "Import project README",
+      description: "Copy the Markdown README from the configured source root into the board's private project documentation store.",
+      inputSchema: { project: z.string().min(1) },
+    },
+    async ({ project }) => {
+      try { return ok(await services.projectDocumentation.importReadme(project)); }
+      catch (err) { return fail(`Cannot import README for ${project}: ${(err as Error).message}`); }
+    },
+  );
+
+  server.registerTool(
     "get_graph",
     {
       title: "Get relationship graph",
@@ -464,6 +611,27 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
         });
       } catch (err) {
         return fail(`Cannot generate code graph for ${project}: ${(err as Error).message}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "refresh_code_graph",
+    {
+      title: "Refresh code graph",
+      description:
+        "Explicitly rebuild a project's code graph after source changes, using the indexer configured on the project " +
+        "('graphify' or 'builtin'). Returns immediately; poll get_code_graph until ready.",
+      inputSchema: { project: z.string().min(1) },
+    },
+    async ({ project }) => {
+      try {
+        const definition = services.projects.get(project);
+        if (!definition) return fail(`Project ${project} not found.`);
+        const meta = await services.codeGraph.generate(project);
+        return ok({ project, indexer: definition.indexer ?? "builtin", meta });
+      } catch (err) {
+        return fail(`Cannot refresh code graph for ${project}: ${(err as Error).message}`);
       }
     },
   );

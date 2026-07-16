@@ -22,7 +22,10 @@ export async function registerStatic(app: FastifyInstance, env: Env): Promise<vo
     await app.register(fastifyStatic, {
       root: env.webDistDir,
       prefix: "/",
-      wildcard: false, // exact-file routes only, so /api/* misses fall through to us
+      // Register the wildcard file handler so hashed Vite assets under /assets/* are
+      // actually served. API routes were registered first and still take precedence;
+      // unknown /api paths are kept JSON-only by the not-found handler below.
+      wildcard: true,
       index: ["index.html"],
     });
   }

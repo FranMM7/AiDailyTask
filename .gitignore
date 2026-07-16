@@ -17,6 +17,7 @@ board/**/*.tmp-*
 board/
 exports/
 graphs/
+project-docs/
 projects.json
 projects.json.tmp-*
 

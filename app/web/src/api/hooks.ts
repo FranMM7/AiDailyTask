@@ -19,6 +19,7 @@ import type {
   TaskFilter,
   TaskSummaryOrInvalid,
   UpdateProjectRequest,
+  ProjectDocumentation,
 } from "@AiDailyTasks/shared";
 import * as api from "./client";
 import { ApiRequestError } from "./client";
@@ -82,6 +83,14 @@ export function useCodeGraph(projectId: string | null | undefined) {
     // While indexing, poll as a fallback in case the SSE nudge is missed.
     refetchInterval: (query) =>
       query.state.data?.meta.status === "indexing" ? 2500 : false,
+  });
+}
+
+export function useProjectDocumentation(projectId: string | null | undefined) {
+  return useQuery<ProjectDocumentation>({
+    queryKey: ["project-documentation", projectId],
+    queryFn: () => api.getProjectDocumentation(projectId as string),
+    enabled: !!projectId,
   });
 }
 
@@ -163,6 +172,25 @@ export function useUpdateProject() {
         err instanceof ApiRequestError ? err.message : "Couldn't update the project.";
       toast(message, "error");
     },
+  });
+}
+
+export function useUpdateProjectDocumentation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, instructions }: { id: string; instructions: string }) =>
+      api.updateProjectDocumentation(id, instructions),
+    onSuccess: (data, { id }) => qc.setQueryData(["project-documentation", id], data),
+    onError: (err) => toast(err instanceof ApiRequestError ? err.message : "Couldn't save project documentation.", "error"),
+  });
+}
+
+export function useImportProjectReadme() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.importProjectReadme(id),
+    onSuccess: (data, id) => qc.setQueryData(["project-documentation", id], data),
+    onError: (err) => toast(err instanceof ApiRequestError ? err.message : "Couldn't import the project README.", "error"),
   });
 }
 

@@ -24,7 +24,7 @@ import {
 } from "@AiDailyTasks/shared";
 import { applyFilter } from "../domain/filter";
 import { buildGraph } from "../domain/graph";
-import type { FsTaskRepository, MutationResult } from "../infrastructure/taskRepository";
+import type { FsTaskRepository, MutationResult, DeleteResult } from "../infrastructure/taskRepository";
 import type { AttachmentStore } from "../infrastructure/attachmentStore";
 import type { EventBus } from "../infrastructure/eventBus";
 import type { Env } from "../env";
@@ -59,6 +59,10 @@ export class TaskService {
 
   unarchive(id: string, baseRev?: number): Promise<MutationResult> {
     return this.repo.setArchived(id, false, baseRev);
+  }
+
+  delete(id: string, baseRev: number): Promise<DeleteResult> {
+    return this.repo.delete(id, baseRev);
   }
 
   /**

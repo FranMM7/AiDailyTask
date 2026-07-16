@@ -250,6 +250,17 @@ export const UpdateProjectRequestSchema = z
   });
 export type UpdateProjectRequest = z.infer<typeof UpdateProjectRequestSchema>;
 
+export interface ProjectDocumentation {
+  project: ProjectDef;
+  instructions: string;
+  readme: { name: string; markdown: string; importedAt: string } | null;
+}
+
+export const UpdateProjectDocumentationSchema = z.object({
+  instructions: z.string().max(500_000),
+});
+export type UpdateProjectDocumentationRequest = z.infer<typeof UpdateProjectDocumentationSchema>;
+
 export const ExportRequestSchema = z.object({
   statuses: z.array(z.enum(STATUSES)).optional(),
   categories: z.array(z.enum(CATEGORIES)).optional(),

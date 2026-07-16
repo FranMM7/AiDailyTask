@@ -22,7 +22,6 @@ import { useUiStore } from "@/store/ui";
 import { ExportDialog } from "./ExportDialog";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { AddProjectDialog } from "./AddProjectDialog";
-import { ManageProjectsDialog } from "./ManageProjectsDialog";
 
 const NAV = [
   { to: "/", label: "Board", icon: LayoutGrid, end: true },
@@ -30,6 +29,7 @@ const NAV = [
   { to: "/table", label: "Table", icon: Table2, end: false },
   { to: "/graph", label: "Graph", icon: Share2, end: false },
   { to: "/code-graph", label: "Code map", icon: Waypoints, end: false },
+  { to: "/projects", label: "Projects", icon: FolderCog, end: false },
   { to: "/archive", label: "Archive", icon: Archive, end: false },
   { to: "/stats", label: "Stats", icon: BarChart3, end: false },
   { to: "/connect", label: "Connect", icon: Plug, end: false },
@@ -59,7 +59,6 @@ export function TopBar() {
   const [exportOpen, setExportOpen] = useState(false);
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [addProjectOpen, setAddProjectOpen] = useState(false);
-  const [manageProjectsOpen, setManageProjectsOpen] = useState(false);
 
   // debounced search box synced to ?q
   const [q, setQ] = useState(params.get("q") ?? "");
@@ -158,14 +157,6 @@ export function TopBar() {
           >
             <FolderPlus size={15} />
           </button>
-          <button
-            type="button"
-            onClick={() => setManageProjectsOpen(true)}
-            title="Manage projects & code graphs"
-            className="ml-1 rounded-md border border-slate-300 p-1.5 hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800"
-          >
-            <FolderCog size={15} />
-          </button>
         </div>
 
         <button
@@ -192,7 +183,6 @@ export function TopBar() {
       <ExportDialog open={exportOpen} onOpenChange={setExportOpen} />
       <NewTaskDialog open={newTaskOpen} onOpenChange={setNewTaskOpen} />
       <AddProjectDialog open={addProjectOpen} onOpenChange={setAddProjectOpen} />
-      <ManageProjectsDialog open={manageProjectsOpen} onOpenChange={setManageProjectsOpen} />
     </header>
   );
 }

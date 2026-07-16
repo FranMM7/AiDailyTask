@@ -13,6 +13,7 @@ import type {
   ObservationRequest,
   PatchRequest,
   ProjectDef,
+  ProjectDocumentation,
   TaskDetail,
   TaskDetailOrInvalid,
   TaskFilter,
@@ -124,6 +125,26 @@ export function updateProject(
     method: "PATCH",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
+  });
+}
+
+export function getProjectDocumentation(id: string): Promise<ProjectDocumentation> {
+  return request<ProjectDocumentation>(`/projects/${encodeURIComponent(id)}/documentation`);
+}
+
+export function updateProjectDocumentation(id: string, instructions: string): Promise<ProjectDocumentation> {
+  return request<ProjectDocumentation>(`/projects/${encodeURIComponent(id)}/documentation`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ instructions }),
+  });
+}
+
+export function importProjectReadme(id: string): Promise<ProjectDocumentation> {
+  return request<ProjectDocumentation>(`/projects/${encodeURIComponent(id)}/documentation/import-readme`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
   });
 }
 

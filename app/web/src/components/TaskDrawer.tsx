@@ -197,16 +197,20 @@ function MarkdownAttachmentPreview({ attachment, onClose }: { attachment: Attach
     return () => controller.abort();
   }, [attachment.url]);
 
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+
   return (
-    <Dialog.Root open onOpenChange={(open) => (!open ? onClose() : undefined)}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[60] bg-black/60 data-[state=open]:animate-in" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-[70] flex h-[70vh] min-h-80 w-[min(760px,calc(100vw-2rem))] min-w-80 max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 resize flex-col overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-900 shadow-2xl outline-none dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100">
+    <div className="fixed inset-0 z-[60]" role="dialog" aria-modal="true" aria-labelledby="markdown-preview-title">
+      <button type="button" className="absolute inset-0 bg-black/60" onClick={onClose} aria-label="Close Markdown preview" />
+        <div className="fixed left-1/2 top-1/2 z-[70] flex h-[70vh] min-h-80 w-[min(760px,calc(100vw-2rem))] min-w-80 max-h-[calc(100vh-2rem)] max-w-[calc(100vw-2rem)] -translate-x-1/2 -translate-y-1/2 resize flex-col overflow-hidden rounded-xl border border-slate-200 bg-white text-slate-900 shadow-2xl outline-none dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100">
           <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-900">
-            <Dialog.Title className="min-w-0 truncate text-sm font-semibold" title={attachment.name}>
+            <h2 id="markdown-preview-title" className="min-w-0 truncate text-sm font-semibold" title={attachment.name}>
               {attachment.name}
-            </Dialog.Title>
-            <Dialog.Description className="sr-only">Markdown attachment preview</Dialog.Description>
+            </h2>
             <div className="flex shrink-0 items-center gap-3">
               <a
                 href={attachment.url}
@@ -217,13 +221,15 @@ function MarkdownAttachmentPreview({ attachment, onClose }: { attachment: Attach
                 <ExternalLink size={12} />
                 Open original
               </a>
-              <Dialog.Close
+              <button
+                type="button"
+                onClick={onClose}
                 className="rounded p-1 text-slate-500 hover:bg-slate-200 hover:text-slate-900 dark:hover:bg-slate-800 dark:hover:text-slate-100"
                 title="Close preview"
                 aria-label={`Close preview of ${attachment.name}`}
               >
                 <X size={16} />
-              </Dialog.Close>
+              </button>
             </div>
           </div>
           <div className="min-h-40 overflow-auto p-5">
@@ -238,9 +244,8 @@ function MarkdownAttachmentPreview({ attachment, onClose }: { attachment: Attach
               </div>
             )}
           </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        </div>
+    </div>
   );
 }
 

@@ -79,6 +79,7 @@ export interface ConflictOutcome {
   current: TaskDetailOrInvalid;
 }
 export type MutationResult = PatchOutcome | ConflictOutcome;
+export type DeleteResult = { conflict: false; id: string } | ConflictOutcome;
 
 export class FsTaskRepository {
   private locks = new Map<string, Mutex>();
@@ -447,6 +448,30 @@ export class FsTaskRepository {
         rev: detail.rev,
       });
       return { conflict: false, task: detail };
+    });
+  }
+
+  /** Permanently remove an archived task directory after an exact revision check. */
+  async delete(id: string, baseRev: number): Promise<DeleteResult> {
+    return this.lockFor(id).runExclusive(async () => {
+      const canonical = normalizeId(id);
+      const file = this.taskFile(canonical);
+      let st: Stats;
+      try { st = await fs.stat(file); }
+      catch { throw new NotFoundError(`Task ${canonical} not found`); }
+      if (st.mtimeMs !== baseRev) return { conflict: true, current: await this.read(canonical) };
+      const detail = await this.readDetailStrict(canonical);
+      if (!detail.archived) {
+        throw new ValidationError(`Task ${canonical} must be archived before permanent deletion`);
+      }
+      const dir = path.dirname(file);
+      const rel = path.relative(this.env.boardDir, dir);
+      if (!ID_DIR_RE.test(rel) || path.isAbsolute(rel)) {
+        throw new ValidationError(`Refusing to delete unsafe task path for ${canonical}`);
+      }
+      await fs.rm(dir, { recursive: true, force: false });
+      this.bus.publish({ type: "task.deleted", id: canonical });
+      return { conflict: false, id: canonical };
     });
   }
 

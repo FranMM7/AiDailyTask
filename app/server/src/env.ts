@@ -14,6 +14,7 @@ export interface Env {
   boardDir: string;
   exportsDir: string;
   graphsDir: string;
+  projectDocsDir: string;
   configPath: string;
   projectsPath: string;
   webDistDir: string;
@@ -40,6 +41,7 @@ export function loadEnv(): Env {
     boardDir: path.join(root, "board"),
     exportsDir: path.join(root, "exports"),
     graphsDir: path.join(root, "graphs"),
+    projectDocsDir: path.join(root, "project-docs"),
     configPath: path.join(root, "board.config.json"),
     projectsPath: path.join(root, "projects.json"),
     webDistDir: path.join(root, "app", "web", "dist"),

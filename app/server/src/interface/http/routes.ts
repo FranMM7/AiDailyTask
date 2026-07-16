@@ -10,6 +10,7 @@ import {
   CreateRequestSchema,
   CreateProjectRequestSchema,
   UpdateProjectRequestSchema,
+  UpdateProjectDocumentationSchema,
   ObservationRequestSchema,
   TaskFilterSchema,
   ExportRequestSchema,
@@ -26,6 +27,7 @@ import type {
 import type { CodeGraphService } from "../../application/codeGraphService";
 import type { ConfigService } from "../../config";
 import type { ProjectsService } from "../../projects";
+import type { ProjectDocumentationService } from "../../application/projectDocumentationService";
 import { NotFoundError, ValidationError, PayloadTooLargeError } from "../../errors";
 
 export interface Services {
@@ -35,6 +37,7 @@ export interface Services {
   attachments: AttachmentService;
   graph: GraphService;
   codeGraph: CodeGraphService;
+  projectDocumentation: ProjectDocumentationService;
   exports: ExportService;
 }
 
@@ -118,6 +121,32 @@ export function registerRoutes(app: FastifyInstance, services: Services): void {
     } catch (err) {
       sendError(reply, err);
     }
+  });
+
+  app.get("/api/projects/:id/documentation", async (req, reply) => {
+    try {
+      const id = decodeURIComponent((req.params as { id: string }).id);
+      reply.send(await services.projectDocumentation.get(id));
+    } catch (err) { sendError(reply, err); }
+  });
+
+  app.put("/api/projects/:id/documentation", async (req, reply) => {
+    try {
+      const id = decodeURIComponent((req.params as { id: string }).id);
+      const parsed = UpdateProjectDocumentationSchema.safeParse(req.body);
+      if (!parsed.success) {
+        reply.code(400).send(errorEnvelope("validation_error", "Invalid project documentation", parsed.error.flatten()));
+        return;
+      }
+      reply.send(await services.projectDocumentation.update(id, parsed.data.instructions));
+    } catch (err) { sendError(reply, err); }
+  });
+
+  app.post("/api/projects/:id/documentation/import-readme", async (req, reply) => {
+    try {
+      const id = decodeURIComponent((req.params as { id: string }).id);
+      reply.send(await services.projectDocumentation.importReadme(id));
+    } catch (err) { sendError(reply, err); }
   });
 
   // ── Code graph (per-project source map) ──────────────────────────────────────
