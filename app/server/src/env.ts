@@ -16,6 +16,7 @@ export interface Env {
   graphsDir: string;
   projectDocsDir: string;
   configPath: string;
+  configTemplatePath: string;
   projectsPath: string;
   webDistDir: string;
   port: number;
@@ -43,6 +44,7 @@ export function loadEnv(): Env {
     graphsDir: path.join(root, "graphs"),
     projectDocsDir: path.join(root, "project-docs"),
     configPath: path.join(root, "board.config.json"),
+    configTemplatePath: path.join(root, "board.config.json.template"),
     projectsPath: path.join(root, "projects.json"),
     webDistDir: path.join(root, "app", "web", "dist"),
     port,

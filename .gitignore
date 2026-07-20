@@ -12,8 +12,9 @@ board/**/*.tmp-*
 
 # ── Private, machine-local data (NEVER committed) ──────────────────────────────
 # This tracker is localhost-only; task content and project names are private and
-# must not be exposed if the repo is ever published. board.config.json (the shared
-# enum/color vocabulary) stays tracked as a template; the data below does not.
+# must not be exposed if the repo is ever published. board.config.json is created
+# locally from the tracked board.config.json.template on first server startup.
+board.config.json
 board/
 exports/
 graphs/

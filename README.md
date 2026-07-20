@@ -306,8 +306,8 @@ site can match a focused workflow without changing private task files.
   labels and colors remain editable.
 
 Changing a vocabulary id does not rewrite existing task files. Rename deliberately or update the
-affected tasks afterward. Because `board.config.json` is the repository's shareable template,
-settings changes appear in Git if this application repository is version-controlled.
+affected tasks afterward. Because `board.config.json` is local and git-ignored, settings changes do
+not appear in Git when this application repository is version-controlled.
 
 ![Workspace settings for board columns and navigation](docs/screenshots/workspace-settings.png)
 
@@ -372,15 +372,16 @@ board/_meta/           overview / relationships / import report            [git-
 exports/               generated Markdown exports                          [git-ignored — private]
 projects.json          your project list ({id,label}) — add via the UI     [git-ignored — private]
 project-docs/<project>/ agent instructions + imported README snapshots      [git-ignored — private]
-board.config.json      vocabulary, skills, board columns, and navigation — tracked template
+board.config.json      local vocabulary/settings, created on first server startup
+board.config.json.template tracked defaults copied when local settings do not exist
 app/shared/            zod contract + shared TypeScript types (server + web)
 app/server/            Fastify + TypeScript API, file watcher, MCP server, importer
 app/web/               React + Vite + TypeScript frontend
 ```
 
 > **Your data is private by default.** `board/`, `exports/`, and `projects.json` are git-ignored, so
-> nothing you track ever lands in git — only the code and the `board.config.json` vocabulary
-> template are version-controlled.
+> nothing you track ever lands in git — only the code and the `board.config.json.template` defaults
+> are version-controlled.
 
 ## Connect any AI agent (MCP)
 

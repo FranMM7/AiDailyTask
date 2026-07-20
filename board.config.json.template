@@ -93,8 +93,8 @@
       "rank": 1
     },
     {
-      "id": "Low–Med",
-      "label": "Low–Med",
+      "id": "Lowâ€“Med",
+      "label": "Lowâ€“Med",
       "color": "#84cc16",
       "rank": 2
     },
@@ -105,8 +105,8 @@
       "rank": 3
     },
     {
-      "id": "Med–High",
-      "label": "Med–High",
+      "id": "Medâ€“High",
+      "label": "Medâ€“High",
       "color": "#f97316",
       "rank": 4
     },
@@ -125,8 +125,8 @@
       "rank": 1
     },
     {
-      "id": "Low–Med",
-      "label": "Low–Med",
+      "id": "Lowâ€“Med",
+      "label": "Lowâ€“Med",
       "color": "#84cc16",
       "rank": 2
     },
@@ -137,8 +137,8 @@
       "rank": 3
     },
     {
-      "id": "Med–High",
-      "label": "Med–High",
+      "id": "Medâ€“High",
+      "label": "Medâ€“High",
       "color": "#f97316",
       "rank": 4
     },
@@ -156,21 +156,25 @@
     {
       "id": "Senior developer",
       "label": "Senior developer",
+      "instructions": "",
       "color": "#3b82f6"
     },
     {
       "id": "Senior frontend developer",
       "label": "Senior frontend developer",
+      "instructions": "",
       "color": "#8b5cf6"
     },
     {
       "id": "Senior backend developer",
       "label": "Senior backend developer",
+      "instructions": "",
       "color": "#0ea5e9"
     },
     {
       "id": "DevOps engineer",
       "label": "DevOps engineer",
+      "instructions": "",
       "color": "#f97316"
     }
   ],
