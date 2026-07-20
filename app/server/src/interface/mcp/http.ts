@@ -15,6 +15,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { McpInfo } from "@AiDailyTasks/shared";
 import { buildMcpServer, MCP_TOOL_SUMMARY } from "./server";
+import { mcpSessionFailure } from "./sessionLookup";
 import type { Services } from "../http/routes";
 import type { Env } from "../../env";
 
@@ -88,12 +89,17 @@ export function registerMcpHttp(app: FastifyInstance, services: Services, env: E
       const sessionId = req.headers["mcp-session-id"] as string | undefined;
       let entry = sessionId ? transports.get(sessionId) : undefined;
       let transport = entry?.transport;
+      const sessionFailure = mcpSessionFailure(
+        sessionId,
+        Boolean(transport),
+        isInitializeRequest(req.body),
+      );
+      if (sessionFailure) {
+        sendJsonError(reply, sessionFailure.code, sessionFailure.httpStatus, sessionFailure.message);
+        return;
+      }
 
       if (!transport) {
-        if (sessionId || !isInitializeRequest(req.body)) {
-          sendJsonError(reply, -32000, 400, "No valid session — send an initialize request first.");
-          return;
-        }
         reapSessions();
         if (transports.size >= MAX_SESSIONS) {
           sendJsonError(reply, -32000, 503, "MCP session limit reached — retry after closing an existing session.");
@@ -126,10 +132,13 @@ export function registerMcpHttp(app: FastifyInstance, services: Services, env: E
     reply.hijack();
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
     const entry = sessionId ? transports.get(sessionId) : undefined;
-    if (!entry) {
-      sendJsonError(reply, -32000, 400, "Invalid or missing mcp-session-id.");
+    const sessionFailure = mcpSessionFailure(sessionId, Boolean(entry), false);
+    if (sessionFailure) {
+      sendJsonError(reply, sessionFailure.code, sessionFailure.httpStatus, sessionFailure.message);
       return;
     }
+    // The classifier guarantees an entry when no failure is returned.
+    if (!entry || !sessionId) return;
     entry.lastActivity = Date.now();
     if (req.method === "GET") entry.openStreams += 1;
     try {

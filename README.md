@@ -457,8 +457,20 @@ tool count, active sessions, session limit, PID, and uptime.
 - **You just edited `.mcp.json`:** it is not hot-loaded. Restart/reconnect before flushing queued MCP
   writes.
 - **Stdio startup trouble:** recopy the current direct-TSX configuration from **Connect**.
-- **Invalid HTTP session:** reconnect instead of retrying forever. The server returns promptly and
-  cleans abandoned sessions after two idle hours.
+- **Invalid or expired HTTP session:** a supplied but unknown session id returns HTTP 404, which is
+  the MCP signal for a compliant client to initialize a fresh session. A request that omits a
+  required id remains HTTP 400. If an agent host still loops after the 404, reconnect that host
+  manually; the server cannot repair client-side cached transport state.
+
+To verify the distinction, concurrent clients, and restart recovery against disposable local data:
+
+```powershell
+npm test
+npm run verify:mcp-session-recovery
+```
+
+`npm test` runs the fast unit matrix for missing, active, and expired session states. The recovery
+command is the slower integration check that starts two real server processes around a restart.
 
 An MCP tool cannot safely restart its own unavailable transport. Recovery must happen through the
 agent host's reconnect action or an out-of-band shell command. Do not claim queued observations were
