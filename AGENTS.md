@@ -140,7 +140,10 @@ If MCP appears unavailable, do not silently queue writes and report them as comp
    changed `.mcp.json` is not hot-loaded: disconnect/reconnect MCP or restart the agent session.
 3. Prefer **Connect**'s direct-TSX stdio config for coding agents; it auto-spawns and does not depend
    on the HTTP application already being open.
-4. After reconnecting, re-read the target task/project, apply queued changes, and confirm each write
+4. Streamable-HTTP requests with an expired id receive 404, the protocol signal to initialize a new
+   session. If the host keeps retrying instead, reconnect it manually; server health cannot clear a
+   client-side session cache.
+5. After reconnecting, re-read the target task/project, apply queued changes, and confirm each write
    with `get_task`/`get_project` read-back.
 
 An MCP-hosted tool cannot restart its own unavailable transport. Recovery must be out-of-band through
