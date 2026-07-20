@@ -74,6 +74,7 @@ export function NewTaskDialog({
       status,
       status_detail: "",
       tags: [],
+      skills: [],
       depends_on: [],
       blocks: [],
       relates_to: [],

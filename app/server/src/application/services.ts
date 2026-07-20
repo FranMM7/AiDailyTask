@@ -255,11 +255,11 @@ export class ExportService {
       if (!rows || rows.length === 0) continue;
       if (req.groupBy !== "none") lines.push(`## ${key} (${rows.length})`, "");
 
-      lines.push("| ID | Title | Status | Category | Severity | Risk | Updated |");
-      lines.push("| --- | --- | --- | --- | --- | --- | --- |");
+      lines.push("| ID | Title | Status | Category | Severity | Risk | Skills | Updated |");
+      lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
       for (const t of rows) {
         lines.push(
-          `| ${t.id} | ${mdEscapeCell(t.title)} | ${t.status} | ${t.category} | ${t.severity} | ${t.risk} | ${(t.updated ?? t.created ?? t.updatedEffective).slice(0, 10)} |`,
+          `| ${t.id} | ${mdEscapeCell(t.title)} | ${t.status} | ${t.category} | ${t.severity} | ${t.risk} | ${mdEscapeCell(t.skills.join(", "))} | ${(t.updated ?? t.created ?? t.updatedEffective).slice(0, 10)} |`,
         );
       }
       lines.push("");

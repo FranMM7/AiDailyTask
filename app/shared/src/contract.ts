@@ -61,6 +61,8 @@ export const FrontmatterSchema = z.object({
   /** Date (YYYY-MM-DD) the task was archived; omitted while active. */
   archived_at: z.string().optional(),
   tags: z.array(z.string()).default([]),
+  /** Explicit agent execution expectations, selected from the board's configured skills. */
+  skills: z.array(z.string()).default([]),
   depends_on: z.array(z.string()).default([]),
   blocks: z.array(z.string()).default([]),
   relates_to: z.array(z.string()).default([]),
@@ -81,6 +83,7 @@ export const EditableFieldsSchema = FrontmatterSchema.pick({
   status_detail: true,
   completed: true,
   tags: true,
+  skills: true,
   depends_on: true,
   blocks: true,
   relates_to: true,
@@ -168,6 +171,7 @@ export const CreateRequestSchema = z.object({
   status: z.enum(STATUSES).default("Not started"),
   status_detail: z.string().default(""),
   tags: z.array(z.string()).default([]),
+  skills: z.array(z.string()).default([]),
   depends_on: z.array(z.string()).default([]),
   blocks: z.array(z.string()).default([]),
   relates_to: z.array(z.string()).default([]),
@@ -424,6 +428,8 @@ export interface BoardConfig {
   categories: EnumDef[];
   severities: EnumDef[];
   risks: EnumDef[];
+  /** Reusable task execution expectations (e.g. Senior frontend engineer). */
+  skills: EnumDef[];
   /** Loaded from local projects.json and merged into the /api/config response. */
   projects: ProjectDef[];
   card: { colorBy: "category" | "severity" };

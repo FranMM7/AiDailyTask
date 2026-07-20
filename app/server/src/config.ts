@@ -36,6 +36,7 @@ const BoardConfigSchema = z.object({
   // real list in from ProjectsService.
   projects: z.array(z.object({ id: z.string(), label: z.string() })).optional().default([]),
   card: z.object({ colorBy: z.enum(["category", "severity"]) }),
+  skills: z.array(EnumDefSchema).default([]),
   board: z.object({ completedColumnLimit: z.number().optional() }).optional(),
   archive: z.object({ autoArchiveDays: z.number() }).optional(),
 });
@@ -47,6 +48,12 @@ function assertCovers(name: string, ids: string[], canonical: readonly string[])
     throw new Error(
       `board.config.json ${name} is missing canonical values: ${missing.join(", ")}`,
     );
+  }
+}
+
+function assertUnique(name: string, ids: string[]): void {
+  if (new Set(ids).size !== ids.length || ids.some((id) => !id.trim())) {
+    throw new Error(`board.config.json ${name} must use unique, non-empty ids`);
   }
 }
 
@@ -73,11 +80,11 @@ export class ConfigService {
     }
     const parsed = BoardConfigSchema.parse(JSON.parse(raw));
 
-    // Validate the config's vocabulary against the frozen contract.
     assertCovers("statuses", parsed.statuses.map((s) => s.id), STATUSES);
     assertCovers("categories", parsed.categories.map((c) => c.id), CATEGORIES);
     assertCovers("severities", parsed.severities.map((s) => s.id), LEVELS);
     assertCovers("risks", parsed.risks.map((r) => r.id), LEVELS);
+    assertUnique("skills", parsed.skills.map((s) => s.id));
 
     this.statusColors = new Map(parsed.statuses.map((s) => [s.id, s.color]));
     this.categoryColors = new Map(parsed.categories.map((c) => [c.id, c.color]));

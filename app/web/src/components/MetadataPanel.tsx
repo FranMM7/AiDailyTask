@@ -23,6 +23,7 @@ interface FormState {
   status: Status;
   status_detail: string;
   tags: string[];
+  skills: string[];
   depends_on: string;
   blocks: string;
   relates_to: string;
@@ -39,6 +40,7 @@ function toForm(task: TaskDetail): FormState {
     status: task.status,
     status_detail: task.status_detail ?? "",
     tags: [...task.tags],
+    skills: [...task.skills],
     depends_on: task.depends_on.join(", "),
     blocks: task.blocks.join(", "),
     relates_to: task.relates_to.join(", "),
@@ -141,6 +143,7 @@ export function MetadataPanel({ task }: { task: TaskDetail }) {
       status: form.status,
       status_detail: form.status_detail,
       tags: form.tags,
+      skills: form.skills,
       depends_on: parseIds(form.depends_on),
       blocks: parseIds(form.blocks),
       relates_to: parseIds(form.relates_to),
@@ -248,6 +251,18 @@ export function MetadataPanel({ task }: { task: TaskDetail }) {
       <Field label="Tags">
         <TagEditor tags={form.tags} onChange={(t) => set("tags", t)} />
       </Field>
+
+      <div>
+        <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+          Skills
+        </span>
+        <TagEditor tags={form.skills} onChange={(t) => set("skills", t)} />
+        {(config?.skills?.length ?? 0) > 0 && (
+          <div className="mt-1 flex flex-wrap gap-1">
+            {config!.skills.filter((s) => !form.skills.includes(s.id)).map((s) => <button key={s.id} type="button" onClick={() => set("skills", [...form.skills, s.id])} className="rounded border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800">+ {s.label ?? s.id}</button>)}
+          </div>
+        )}
+      </div>
 
       <div className="grid grid-cols-1 gap-3">
         <Field label="Depends on">

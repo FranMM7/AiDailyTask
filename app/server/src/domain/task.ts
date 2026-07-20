@@ -147,6 +147,7 @@ const KEY_ORDER: readonly (keyof Frontmatter)[] = [
   "archived",
   "archived_at",
   "tags",
+  "skills",
   "depends_on",
   "blocks",
   "relates_to",

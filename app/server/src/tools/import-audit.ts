@@ -261,6 +261,7 @@ async function main(): Promise<void> {
       ...(t.status === "Completed" && t.completed ? { completed: t.completed } : {}),
       archived: false,
       tags: [],
+      skills: [],
       depends_on: rel.depends_on.get(t.id) ?? [],
       blocks: rel.blocks.get(t.id) ?? [],
       relates_to: rel.relates_to.get(t.id) ?? [],

@@ -34,6 +34,12 @@
     { "id": "Med–High", "label": "Med–High", "color": "#f97316", "rank": 4 },
     { "id": "High", "label": "High", "color": "#ef4444", "rank": 5 }
   ],
+  "skills": [
+    { "id": "Senior developer", "label": "Senior developer", "color": "#3b82f6" },
+    { "id": "Senior frontend developer", "label": "Senior frontend developer", "color": "#8b5cf6" },
+    { "id": "Senior backend developer", "label": "Senior backend developer", "color": "#0ea5e9" },
+    { "id": "DevOps engineer", "label": "DevOps engineer", "color": "#f97316" }
+  ],
   "card": { "colorBy": "category" },
   "board": { "completedColumnLimit": 10 },
   "archive": { "autoArchiveDays": 14 }

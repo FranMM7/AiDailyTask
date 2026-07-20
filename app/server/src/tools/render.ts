@@ -19,6 +19,7 @@ export function dumpFrontmatter(fm: Frontmatter): string {
   if (fm.updated) obj.updated = fm.updated;
   if (fm.completed) obj.completed = fm.completed;
   obj.tags = fm.tags;
+  obj.skills = fm.skills;
   obj.depends_on = fm.depends_on;
   obj.blocks = fm.blocks;
   obj.relates_to = fm.relates_to;
