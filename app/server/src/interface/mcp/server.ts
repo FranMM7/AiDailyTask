@@ -57,7 +57,7 @@ function fail(message: string): ToolResult {
 /** Names + one-liners for the registered tools — surfaced by GET /api/mcp-info for the Connect page. */
 export const MCP_TOOL_SUMMARY: { name: string; description: string }[] = [
   { name: "list_tasks", description: "List board tasks (summaries) with optional filters." },
-  { name: "get_task", description: "Read one task in full (frontmatter, summary, scope, observations)." },
+  { name: "get_task", description: "Read one task in full; may include a ready-Graphify study hint." },
   { name: "create_task", description: "Create a task; the id is auto-assigned." },
   { name: "update_task", description: "Patch a task's fields and/or summary/scope." },
   { name: "delete_task", description: "Permanently delete an archived task after revision confirmation." },
@@ -94,6 +94,9 @@ const CONFLICT_MSG =
 
 export function buildMcpServer(services: Services, version = "1.0.0"): McpServer {
   const server = new McpServer({ name: "AiDailyTasks", version });
+  // One McpServer instance is created per HTTP session (and once per stdio process),
+  // so this keeps the advisory useful without repeating it on every task read.
+  const graphifyHintsShown = new Set<string>();
 
   // ── Read ───────────────────────────────────────────────────────────────────
   server.registerTool(
@@ -144,12 +147,35 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
     "get_task",
     {
       title: "Get task",
-      description: "Read one task in full: frontmatter, summary, scope, observations, attachments.",
+      description:
+        "Read one task in full: frontmatter, summary, scope, observations, attachments. " +
+        "The first eligible read in a session may include a non-blocking Graphify study hint.",
       inputSchema: { id: z.string().describe("Task id, e.g. C09") },
     },
     async ({ id }) => {
       const t = await services.tasks.get(id);
       if (!t.valid) return fail(`Task ${id} is invalid: ${t.parseError}`);
+
+      const hintKey = t.project;
+      let projectStudyHint: {
+        label: string;
+        project: string;
+        recommended_tool: "graphify_query";
+        message: string;
+      } | undefined;
+      if (!graphifyHintsShown.has(hintKey) && (await services.codeGraph.hasReadyGraphify(t.project))) {
+        graphifyHintsShown.add(hintKey);
+        projectStudyHint = {
+          label: "Ready Graphify project context",
+          project: t.project,
+          recommended_tool: "graphify_query",
+          message:
+            `A ready Graphify index is available for ${t.project}. Before substantial work, ` +
+            "consider graphify_query for a quick architecture study. This is advisory; no graph " +
+            "query or refresh has run.",
+        };
+      }
+
       return ok({
         id: t.id,
         title: t.title,
@@ -175,6 +201,7 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
         scope: t.scopeMarkdown,
         observations: t.observations,
         attachments: t.attachments.map((a) => ({ name: a.name, size: a.size, url: a.url })),
+        ...(projectStudyHint ? { project_study_hint: projectStudyHint } : {}),
       });
     },
   );

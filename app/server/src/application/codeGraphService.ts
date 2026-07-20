@@ -142,6 +142,18 @@ export class CodeGraphService {
   }
 
   /**
+   * Cheap, read-only capability check used to surface an optional agent hint.
+   * It reads only the metadata sidecar: no graph generation, graph loading, or
+   * Graphify query is performed.
+   */
+  async hasReadyGraphify(projectId: string): Promise<boolean> {
+    if (!this.projects.get(projectId)) return false;
+    if (this.indexerFor(projectId) !== "graphify" || this.running.has(projectId)) return false;
+    const meta = await this.readMeta(projectId);
+    return meta?.status === "ready" && meta.indexer === "graphify";
+  }
+
+  /**
    * Run a graphify subcommand (query/affected/path/explain/…) against a project's
    * graphify graph.json and return its stdout. Requires the project to have been
    * generated with the graphify indexer. Exported to the MCP layer.
