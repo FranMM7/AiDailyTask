@@ -1,12 +1,4 @@
-import {
-  STATUSES,
-  CATEGORIES,
-  LEVELS,
-  type TaskFilter,
-  type Status,
-  type Category,
-  type Level,
-} from "@AiDailyTasks/shared";
+import type { TaskFilter } from "@AiDailyTasks/shared";
 
 const SORT_VALUES = [
   "id",
@@ -25,16 +17,11 @@ type SortValue = (typeof SORT_VALUES)[number];
 const DATE_FIELDS = ["created", "updated", "completed"] as const;
 type DateField = (typeof DATE_FIELDS)[number];
 
-function pick<T extends string>(values: string[], allowed: readonly T[]): T[] {
-  const set = allowed as readonly string[];
-  return values.filter((v): v is T => set.includes(v));
-}
-
 /** Read a TaskFilter out of the URL search params (the single source of view state). */
 export function readFilter(sp: URLSearchParams): TaskFilter {
-  const status = pick<Status>(sp.getAll("status"), STATUSES);
-  const category = pick<Category>(sp.getAll("category"), CATEGORIES);
-  const severity = pick<Level>(sp.getAll("severity"), LEVELS);
+  const status = sp.getAll("status").filter(Boolean);
+  const category = sp.getAll("category").filter(Boolean);
+  const severity = sp.getAll("severity").filter(Boolean);
 
   const sortRaw = sp.get("sort");
   const sort: SortValue = (SORT_VALUES as readonly string[]).includes(sortRaw ?? "")

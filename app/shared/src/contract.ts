@@ -16,14 +16,14 @@ import { z } from "zod";
 
 // ── Canonical vocabularies ─────────────────────────────────────────────────
 export const STATUSES = ["Backlog", "Not started", "Scoped", "In progress", "Completed"] as const;
-export type Status = (typeof STATUSES)[number];
+export type Status = string;
 
 export const CATEGORIES = ["Refactor", "Bug", "Feature", "UX", "Arch", "Org", "Docs", "Test", "Perf", "Security"] as const;
-export type Category = (typeof CATEGORIES)[number];
+export type Category = string;
 
 /** Severity and Risk share this 5-level ordinal scale. */
 export const LEVELS = ["Low", "Low–Med", "Medium", "Med–High", "High"] as const;
-export type Level = (typeof LEVELS)[number];
+export type Level = string;
 
 export const LEVEL_RANK: Record<Level, number> = {
   Low: 1,
@@ -48,10 +48,10 @@ export const FrontmatterSchema = z.object({
   id: z.string().regex(ID_PATTERN),
   title: z.string().min(1),
   project: z.string().default("Sample"),
-  category: z.enum(CATEGORIES),
-  severity: z.enum(LEVELS),
-  risk: z.enum(LEVELS),
-  status: z.enum(STATUSES),
+  category: z.string().trim().min(1),
+  severity: z.string().trim().min(1),
+  risk: z.string().trim().min(1),
+  status: z.string().trim().min(1),
   status_detail: z.string().default(""),
   created: z.string().optional(),
   updated: z.string().optional(),
@@ -165,10 +165,10 @@ export const CreateRequestSchema = z.object({
   id: z.string().regex(ID_PATTERN).optional(),
   title: z.string().min(1),
   project: z.string().default("Sample"),
-  category: z.enum(CATEGORIES),
-  severity: z.enum(LEVELS).default("Medium"),
-  risk: z.enum(LEVELS).default("Low"),
-  status: z.enum(STATUSES).default("Not started"),
+  category: z.string().trim().min(1),
+  severity: z.string().trim().min(1).default("Medium"),
+  risk: z.string().trim().min(1).default("Low"),
+  status: z.string().trim().min(1).default("Not started"),
   status_detail: z.string().default(""),
   tags: z.array(z.string()).default([]),
   skills: z.array(z.string()).default([]),
@@ -193,9 +193,9 @@ export type ObservationRequest = z.infer<typeof ObservationRequestSchema>;
 /** Query params for GET /tasks. Arrays may arrive as repeated query keys or CSV. */
 export const TaskFilterSchema = z.object({
   project: z.string().optional(),
-  status: z.array(z.enum(STATUSES)).optional(),
-  category: z.array(z.enum(CATEGORIES)).optional(),
-  severity: z.array(z.enum(LEVELS)).optional(),
+  status: z.array(z.string().min(1)).optional(),
+  category: z.array(z.string().min(1)).optional(),
+  severity: z.array(z.string().min(1)).optional(),
   tag: z.string().optional(),
   q: z.string().optional(),
   /** Date-range filter: which date field to test, plus an inclusive [from, to] window (YYYY-MM-DD). */
@@ -266,10 +266,10 @@ export const UpdateProjectDocumentationSchema = z.object({
 export type UpdateProjectDocumentationRequest = z.infer<typeof UpdateProjectDocumentationSchema>;
 
 export const ExportRequestSchema = z.object({
-  statuses: z.array(z.enum(STATUSES)).optional(),
-  categories: z.array(z.enum(CATEGORIES)).optional(),
+  statuses: z.array(z.string().min(1)).optional(),
+  categories: z.array(z.string().min(1)).optional(),
   projects: z.array(z.string()).optional(),
-  severities: z.array(z.enum(LEVELS)).optional(),
+  severities: z.array(z.string().min(1)).optional(),
   includeObservations: z.boolean().default(false),
   includeScope: z.boolean().default(false),
   groupBy: z.enum(["status", "category", "project", "none"]).default("status"),
@@ -434,7 +434,13 @@ export interface BoardConfig {
   projects: ProjectDef[];
   card: { colorBy: "category" | "severity" };
   /** Board view tuning. `completedColumnLimit` caps how many (most-recent) cards the Completed column shows. */
-  board?: { completedColumnLimit?: number };
+  board?: {
+    completedColumnLimit?: number;
+    showBacklogColumn?: boolean;
+    hiddenColumns?: string[];
+  };
+  /** Local navigation preferences; hidden routes remain addressable by URL. */
+  navigation?: { hiddenTabs?: string[] };
   /** Auto-archive policy. Completed tasks older than `autoArchiveDays` are archived by a server sweep. */
   archive?: { autoArchiveDays: number };
 }

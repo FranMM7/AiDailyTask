@@ -223,8 +223,13 @@ export class ExportService {
   }
 
   private orderedGroupKeys(groupBy: ExportRequest["groupBy"], present: Set<string>): string[] {
-    if (groupBy === "status") return STATUSES.filter((s) => present.has(s));
-    if (groupBy === "category") return CATEGORIES.filter((c) => present.has(c));
+    if (groupBy === "status" || groupBy === "category") {
+      const preferred = groupBy === "status" ? STATUSES : CATEGORIES;
+      return [
+        ...preferred.filter((value) => present.has(value)),
+        ...[...present].filter((value) => !(preferred as readonly string[]).includes(value)).sort(),
+      ];
+    }
     return [...present].sort();
   }
 

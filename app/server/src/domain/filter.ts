@@ -11,7 +11,6 @@ import {
   type TaskFilter,
   STATUS_ORDER,
   LEVEL_RANK,
-  CATEGORIES,
   idNum,
 } from "@AiDailyTasks/shared";
 
@@ -75,7 +74,7 @@ function compare(a: TaskSummary, b: TaskSummary, sort: TaskFilter["sort"]): numb
     case "risk":
       return (LEVEL_RANK[a.risk] ?? 0) - (LEVEL_RANK[b.risk] ?? 0);
     case "category":
-      return CATEGORIES.indexOf(a.category) - CATEGORIES.indexOf(b.category);
+      return a.category.localeCompare(b.category);
     case "project":
       return a.project.localeCompare(b.project);
     case "updated":

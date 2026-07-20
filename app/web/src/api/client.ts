@@ -105,6 +105,14 @@ export function getConfig(): Promise<BoardConfig> {
   return request<BoardConfig>("/config");
 }
 
+export function updateConfig(body: BoardConfig): Promise<BoardConfig> {
+  return request<BoardConfig>("/config", {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
 export function getMcpInfo(): Promise<McpInfo> {
   return request<McpInfo>("/mcp-info");
 }

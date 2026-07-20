@@ -3,12 +3,11 @@
  * lookups (value sets, status order, level rank, colors). Cached, with reload().
  */
 import { readFileSync } from "node:fs";
+import { rename, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { z } from "zod";
 import {
   type BoardConfig,
-  STATUSES,
-  CATEGORIES,
-  LEVELS,
   STATUS_ORDER,
   LEVEL_RANK,
   type Status,
@@ -17,9 +16,9 @@ import {
 import type { Env } from "./env";
 
 const EnumDefSchema = z.object({
-  id: z.string(),
-  label: z.string().optional(),
-  color: z.string(),
+  id: z.string().trim().min(1),
+  label: z.string().trim().min(1).optional(),
+  color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
   order: z.number().optional(),
   rank: z.number().optional(),
 });
@@ -37,23 +36,24 @@ const BoardConfigSchema = z.object({
   projects: z.array(z.object({ id: z.string(), label: z.string() })).optional().default([]),
   card: z.object({ colorBy: z.enum(["category", "severity"]) }),
   skills: z.array(EnumDefSchema).default([]),
-  board: z.object({ completedColumnLimit: z.number().optional() }).optional(),
+  board: z.object({
+    completedColumnLimit: z.number().int().min(1).max(500).optional(),
+    showBacklogColumn: z.boolean().optional(),
+    hiddenColumns: z.array(z.string()).optional(),
+  }).optional(),
+  navigation: z.object({ hiddenTabs: z.array(z.string()).optional() }).optional(),
   archive: z.object({ autoArchiveDays: z.number() }).optional(),
 });
-
-function assertCovers(name: string, ids: string[], canonical: readonly string[]): void {
-  const set = new Set(ids);
-  const missing = canonical.filter((v) => !set.has(v));
-  if (missing.length > 0) {
-    throw new Error(
-      `board.config.json ${name} is missing canonical values: ${missing.join(", ")}`,
-    );
-  }
-}
 
 function assertUnique(name: string, ids: string[]): void {
   if (new Set(ids).size !== ids.length || ids.some((id) => !id.trim())) {
     throw new Error(`board.config.json ${name} must use unique, non-empty ids`);
+  }
+}
+
+function assertProtectedStatuses(ids: string[]): void {
+  for (const required of ["Backlog", "Completed"]) {
+    if (!ids.includes(required)) throw new Error(`board.config.json statuses must retain protected id: ${required}`);
   }
 }
 
@@ -80,11 +80,15 @@ export class ConfigService {
     }
     const parsed = BoardConfigSchema.parse(JSON.parse(raw));
 
-    assertCovers("statuses", parsed.statuses.map((s) => s.id), STATUSES);
-    assertCovers("categories", parsed.categories.map((c) => c.id), CATEGORIES);
-    assertCovers("severities", parsed.severities.map((s) => s.id), LEVELS);
-    assertCovers("risks", parsed.risks.map((r) => r.id), LEVELS);
+    assertUnique("statuses", parsed.statuses.map((s) => s.id));
+    assertUnique("categories", parsed.categories.map((s) => s.id));
+    assertUnique("severities", parsed.severities.map((s) => s.id));
+    assertUnique("risks", parsed.risks.map((s) => s.id));
     assertUnique("skills", parsed.skills.map((s) => s.id));
+    assertProtectedStatuses(parsed.statuses.map((s) => s.id));
+    if (!parsed.categories.length || !parsed.severities.length || !parsed.risks.length) {
+      throw new Error("board.config.json categories, severities, and risks must not be empty");
+    }
 
     this.statusColors = new Map(parsed.statuses.map((s) => [s.id, s.color]));
     this.categoryColors = new Map(parsed.categories.map((c) => [c.id, c.color]));
@@ -99,6 +103,29 @@ export class ConfigService {
   reload(): BoardConfig {
     this.config = this.loadAndValidate();
     return this.config;
+  }
+
+  async update(input: unknown): Promise<BoardConfig> {
+    const parsed = BoardConfigSchema.parse({ ...(input as object), projects: [] });
+    const ids = (defs: { id: string }[]) => defs.map((item) => item.id);
+    assertUnique("statuses", ids(parsed.statuses));
+    assertUnique("categories", ids(parsed.categories));
+    assertUnique("severities", ids(parsed.severities));
+    assertUnique("risks", ids(parsed.risks));
+    assertUnique("skills", ids(parsed.skills));
+    assertProtectedStatuses(ids(parsed.statuses));
+    if (!parsed.categories.length || !parsed.severities.length || !parsed.risks.length) {
+      throw new Error("categories, severities, and risks must not be empty");
+    }
+
+    const { projects: _localProjects, ...persisted } = parsed;
+    const temp = path.join(
+      path.dirname(this.env.configPath),
+      `.board.config.tmp-${process.pid}-${Date.now()}`,
+    );
+    await writeFile(temp, `${JSON.stringify(persisted, null, 2)}\n`, "utf8");
+    await rename(temp, this.env.configPath);
+    return this.reload();
   }
 
   get(): BoardConfig {

@@ -88,6 +88,15 @@ export function registerRoutes(app: FastifyInstance, services: Services): void {
     reply.send({ ...services.config.get(), projects: services.projects.list() });
   });
 
+  app.put("/api/config", async (req, reply) => {
+    try {
+      const next = await services.config.update(req.body);
+      reply.send({ ...next, projects: services.projects.list() });
+    } catch (err) {
+      reply.code(400).send(errorEnvelope("validation_error", (err as Error).message));
+    }
+  });
+
   // ── Projects ───────────────────────────────────────────────────────────────
   app.get("/api/projects", async (_req, reply) => {
     reply.send({ projects: services.projects.list() });

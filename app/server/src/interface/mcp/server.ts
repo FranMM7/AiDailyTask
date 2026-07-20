@@ -14,9 +14,6 @@ import { z } from "zod";
 import {
   CreateRequestSchema,
   TaskFilterSchema,
-  STATUSES,
-  CATEGORIES,
-  LEVELS,
   normalizeId,
   type EditableFields,
   type PatchRequest,
@@ -79,6 +76,7 @@ export const MCP_TOOL_SUMMARY: { name: string; description: string }[] = [
   { name: "update_project_documentation", description: "Save project-specific Markdown instructions for people and agents." },
   { name: "import_project_readme", description: "Copy a project's root README into its private documentation store." },
   { name: "get_config", description: "Board vocabulary: statuses, categories, severities, risks, projects." },
+  { name: "update_config", description: "Update local board vocabulary and workspace visibility preferences." },
   { name: "get_graph", description: "Task relationship graph (depends_on / blocks / relates_to / parent)." },
   { name: "generate_code_graph", description: "Build/refresh a project's code graph (async; built-in or graphify per project)." },
   { name: "refresh_code_graph", description: "Explicitly rebuild a project's current built-in or Graphify index." },
@@ -106,9 +104,9 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
         "List board tasks (summaries) with optional filters. Archived tasks are excluded by default.",
       inputSchema: {
         project: z.string().optional(),
-        status: z.array(z.enum(STATUSES)).optional(),
-        category: z.array(z.enum(CATEGORIES)).optional(),
-        severity: z.array(z.enum(LEVELS)).optional(),
+        status: z.array(z.string()).optional(),
+        category: z.array(z.string()).optional(),
+        severity: z.array(z.string()).optional(),
         tag: z.string().optional(),
         q: z.string().optional().describe("Full-text search over title/summary/scope"),
         archived: z.enum(["exclude", "only", "include"]).optional(),
@@ -316,11 +314,11 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
       inputSchema: {
         id: z.string().optional().describe("Optional explicit task id, e.g. C99"),
         title: z.string().min(1),
-        category: z.enum(CATEGORIES),
+        category: z.string().min(1),
         project: z.string().optional(),
-        severity: z.enum(LEVELS).optional(),
-        risk: z.enum(LEVELS).optional(),
-        status: z.enum(STATUSES).optional(),
+        severity: z.string().min(1).optional(),
+        risk: z.string().min(1).optional(),
+        status: z.string().min(1).optional(),
         status_detail: z.string().optional(),
         summary: z.string().optional(),
         scope: z.string().optional(),
@@ -350,10 +348,10 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
         id: z.string(),
         baseRev: z.number().optional(),
         title: z.string().optional(),
-        status: z.enum(STATUSES).optional(),
-        category: z.enum(CATEGORIES).optional(),
-        severity: z.enum(LEVELS).optional(),
-        risk: z.enum(LEVELS).optional(),
+        status: z.string().min(1).optional(),
+        category: z.string().min(1).optional(),
+        severity: z.string().min(1).optional(),
+        risk: z.string().min(1).optional(),
         project: z.string().optional(),
         status_detail: z.string().optional(),
         tags: z.array(z.string()).optional(),
@@ -542,6 +540,25 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
       description: "The board vocabulary: statuses, categories, severities, risks, projects.",
     },
     async () => ok({ ...services.config.get(), projects: services.projects.list() }),
+  );
+
+  server.registerTool(
+    "update_config",
+    {
+      title: "Update board config",
+      description:
+        "Update local board vocabulary and visibility preferences. Read get_config first, preserve protected " +
+        "status ids Backlog and Completed, and send the full config object.",
+      inputSchema: { config: z.record(z.unknown()) },
+    },
+    async ({ config }) => {
+      try {
+        const updated = await services.config.update(config);
+        return ok({ ...updated, projects: services.projects.list() });
+      } catch (err) {
+        return fail(`Cannot update board config: ${(err as Error).message}`);
+      }
+    },
   );
 
   server.registerTool(

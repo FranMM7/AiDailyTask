@@ -54,7 +54,7 @@ export function StatsView() {
     const total = tasks.length;
 
     const byStatus = new Map<Status, number>();
-    for (const s of STATUSES) byStatus.set(s, 0);
+    for (const s of config?.statuses.map((item) => item.id) ?? STATUSES) byStatus.set(s, 0);
     for (const t of tasks) byStatus.set(t.status, (byStatus.get(t.status) ?? 0) + 1);
 
     const completed = tasks.filter((t) => t.status === "Completed" || t.archived);
@@ -110,7 +110,7 @@ export function StatsView() {
       measured: cycles.length,
       bucketCounts,
     };
-  }, [data]);
+  }, [config?.statuses, data]);
 
   if (isLoading) return <Msg>Loading statistics…</Msg>;
   if (isError) return <Msg>Failed to load statistics.</Msg>;
@@ -154,7 +154,7 @@ export function StatsView() {
         <section className="rounded-xl border border-slate-200 p-4 dark:border-slate-800">
           <h2 className="mb-3 text-sm font-semibold">Tasks by status</h2>
           <div className="space-y-2">
-            {STATUSES.map((s) => {
+            {(config?.statuses.map((item) => item.id) ?? STATUSES).map((s) => {
               const count = stats.byStatus.get(s) ?? 0;
               const color = statusColor(config, s);
               return (

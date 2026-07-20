@@ -10,7 +10,6 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import type { Status, TaskSummary, TaskSummaryOrInvalid } from "@AiDailyTasks/shared";
-import { STATUSES } from "@AiDailyTasks/shared";
 import { useConfig, usePatchTask, useTasks } from "@/api/hooks";
 import { readFilter } from "@/lib/filters";
 import { TaskCard } from "@/components/TaskCard";
@@ -101,13 +100,16 @@ export function BoardView() {
   // Backlog has its own tab, so it is intentionally NOT rendered as a board column;
   // tasks parked there stay off the active board (they're still bucketed below, just hidden).
   const statusDefs = useMemo(() => {
-    const defs = (config?.statuses ?? []).filter((s) => s.id !== "Backlog");
+    const hidden = new Set(config?.board?.hiddenColumns ?? []);
+    const defs = (config?.statuses ?? []).filter(
+      (s) => !hidden.has(s.id) && (s.id !== "Backlog" || config?.board?.showBacklogColumn),
+    );
     return [...defs].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   }, [config]);
 
   const { byStatus, invalid } = useMemo(() => {
     const map = new Map<string, TaskSummaryOrInvalid[]>();
-    for (const s of STATUSES) map.set(s, []);
+    for (const s of config?.statuses ?? []) map.set(s.id, []);
     const inv: TaskSummaryOrInvalid[] = [];
     for (const t of data?.tasks ?? []) {
       if (!t.valid) {
@@ -126,7 +128,7 @@ export function BoardView() {
     completed.sort((a, b) => completedRecencyKey(b).localeCompare(completedRecencyKey(a)));
     map.set("Completed", completed);
     return { byStatus: map, invalid: inv };
-  }, [data]);
+  }, [config?.statuses, data]);
 
   const onDragEnd = (e: DragEndEvent) => {
     const overId = e.over?.id;

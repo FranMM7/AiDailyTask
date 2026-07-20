@@ -11,6 +11,7 @@ import {
   Plug,
   Search,
   Download,
+  Settings,
   Plus,
   FolderPlus,
   FolderCog,
@@ -94,7 +95,7 @@ export function TopBar() {
       </div>
 
       <nav className="flex items-center gap-1">
-        {NAV.map(({ to, label, icon: Icon, end }) => (
+        {NAV.filter((item) => !(config?.navigation?.hiddenTabs ?? []).includes(item.to)).map(({ to, label, icon: Icon, end }) => (
           <NavLink
             key={to}
             to={{ pathname: to, search: window.location.search }}
@@ -167,6 +168,21 @@ export function TopBar() {
           <Download size={15} />
           <span className="hidden sm:inline">Export</span>
         </button>
+
+        <NavLink
+          to={{ pathname: "/settings", search: window.location.search }}
+          title="Settings"
+          aria-label="Settings"
+          className={({ isActive }) =>
+            `rounded-md border p-1.5 transition ${
+              isActive
+                ? "border-blue-600 bg-blue-600 text-white"
+                : "border-slate-300 hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800"
+            }`
+          }
+        >
+          <Settings size={16} />
+        </NavLink>
 
         <button
           type="button"

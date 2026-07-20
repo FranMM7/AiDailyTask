@@ -38,6 +38,15 @@ export function useConfig() {
   });
 }
 
+export function useUpdateConfig() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: api.updateConfig,
+    onSuccess: (config) => qc.setQueryData(["config"], config),
+    onError: (err) => toast(err instanceof ApiRequestError ? err.message : "Couldn't save settings.", "error"),
+  });
+}
+
 export function useMcpInfo() {
   return useQuery({
     queryKey: ["mcp-info"],

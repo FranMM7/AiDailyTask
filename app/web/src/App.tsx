@@ -15,6 +15,7 @@ import { ArchiveView } from "@/views/ArchiveView";
 import { StatsView } from "@/views/StatsView";
 import { McpConfigView } from "@/views/McpConfigView";
 import { ProjectsView } from "@/views/ProjectsView";
+import { SettingsView } from "@/views/SettingsView";
 
 function NotFound() {
   return (
@@ -60,6 +61,7 @@ export default function App() {
           <Route path="/connect" element={<McpConfigView />} />
           <Route path="/projects" element={<ProjectsView />} />
           <Route path="/projects/:projectId" element={<ProjectsView />} />
+          <Route path="/settings" element={<SettingsView />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>
