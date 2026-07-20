@@ -18,6 +18,7 @@ import type { Env } from "./env";
 const EnumDefSchema = z.object({
   id: z.string().trim().min(1),
   label: z.string().trim().min(1).optional(),
+  instructions: z.string().optional(),
   color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
   order: z.number().optional(),
   rank: z.number().optional(),

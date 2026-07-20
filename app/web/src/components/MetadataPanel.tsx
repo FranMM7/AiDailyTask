@@ -262,7 +262,7 @@ export function MetadataPanel({ task }: { task: TaskDetail }) {
         <TagEditor tags={form.skills} onChange={(t) => set("skills", t)} />
         {(config?.skills?.length ?? 0) > 0 && (
           <div className="mt-1 flex flex-wrap gap-1">
-            {config!.skills.filter((s) => !form.skills.includes(s.id)).map((s) => <button key={s.id} type="button" onClick={() => set("skills", [...form.skills, s.id])} className="rounded border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800">+ {s.label ?? s.id}</button>)}
+            {config!.skills.filter((s) => !form.skills.includes(s.id)).map((s) => <button key={s.id} type="button" onClick={() => set("skills", [...form.skills, s.id])} className="rounded border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-500 hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800">+ {s.id}</button>)}
           </div>
         )}
       </div>

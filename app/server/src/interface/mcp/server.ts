@@ -192,6 +192,17 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
         archived: t.archived,
         tags: t.tags,
         skills: t.skills,
+        skill_details: t.skills.map((id) => {
+          const configured = services.config.get().skills.find((skill) => skill.id === id);
+          return {
+            id,
+            title: configured?.id ?? id,
+            instructions:
+              configured?.instructions ??
+              (configured?.label && configured.label !== configured.id ? configured.label : ""),
+            configured: Boolean(configured),
+          };
+        }),
         recurring: t.recurring,
         recurrence_of: t.recurrence_of,
         depends_on: t.depends_on,

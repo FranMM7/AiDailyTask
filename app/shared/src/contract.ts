@@ -423,6 +423,8 @@ export interface McpInfo {
 export interface EnumDef {
   id: string;
   label?: string;
+  /** Optional agent-facing execution guidance. Currently used by configured skills. */
+  instructions?: string;
   color: string;
   order?: number;
   rank?: number;
