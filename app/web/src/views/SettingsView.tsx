@@ -77,7 +77,7 @@ function VocabularyEditor({
           const protectedId = protectedIds.has(value.id);
           const canRemove = !protectedId && (allowEmpty || values.length > 1);
           return (
-            <div key={`${value.id}-${index}`} className="grid grid-cols-[minmax(8rem,1fr)_minmax(8rem,1fr)_2.5rem_2.25rem] items-center gap-2">
+            <div key={index} className="grid grid-cols-[minmax(8rem,1fr)_minmax(8rem,1fr)_2.5rem_2.25rem] items-center gap-2">
               <input
                 aria-label={`${title} id ${index + 1}`}
                 value={value.id}
@@ -137,7 +137,7 @@ function SkillEditor({ values, onChange }: { values: EnumDef[]; onChange: (value
       <div className="space-y-3">
         {values.map((value, index) => (
           <div
-            key={`${value.id}-${index}`}
+            key={index}
             className="grid grid-cols-[minmax(0,1fr)_2.5rem_2.25rem] gap-2 rounded-lg border border-slate-200 p-3 dark:border-slate-800"
           >
             <label className="min-w-0 text-xs font-medium text-slate-500">
