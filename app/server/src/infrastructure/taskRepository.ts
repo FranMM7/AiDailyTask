@@ -52,6 +52,7 @@ const TRACKED_FIELDS: Array<[keyof Frontmatter, string]> = [
   ["category", "category"],
   ["project", "project"],
   ["title", "title"],
+  ["recurring", "recurring"],
 ];
 
 function fmtVal(v: unknown): string {
@@ -73,6 +74,8 @@ function describeFieldChanges(before: Frontmatter, after: Frontmatter): string[]
 export interface PatchOutcome {
   conflict: false;
   task: TaskDetail;
+  /** Generated or previously-generated successor when a recurring task is archived. */
+  successor?: TaskDetail;
 }
 export interface ConflictOutcome {
   conflict: true;
@@ -234,6 +237,13 @@ export class FsTaskRepository {
 
   // ── Create ────────────────────────────────────────────────────────────────────
   async create(req: CreateRequest): Promise<TaskDetail> {
+    return this.createWithLineage(req, null);
+  }
+
+  private async createWithLineage(
+    req: CreateRequest,
+    recurrenceOf: string | null,
+  ): Promise<TaskDetail> {
     return this.allocationLock.runExclusive(async () => {
       const id = await this.resolveNewId(req.id);
       const dir = this.taskDir(id);
@@ -256,6 +266,8 @@ export class FsTaskRepository {
         archived: false,
         tags: req.tags,
         skills: req.skills,
+        recurring: req.recurring,
+        recurrence_of: recurrenceOf,
         depends_on: req.depends_on,
         blocks: req.blocks,
         relates_to: req.relates_to,
@@ -432,7 +444,9 @@ export class FsTaskRepository {
       const fm: Frontmatter = { ...parsed.frontmatter, id: normalizeId(id) };
       if (fm.archived === archived) {
         // Already in the desired state — don't rewrite the file.
-        return { conflict: false, task: await this.readDetailStrict(id) };
+        const task = await this.readDetailStrict(id);
+        const successor = archived ? await this.ensureRecurringSuccessor(task) : undefined;
+        return { conflict: false, task, ...(successor ? { successor } : {}) };
       }
       fm.archived = archived;
       fm.archived_at = archived ? this.today() : undefined;
@@ -445,8 +459,53 @@ export class FsTaskRepository {
         task: this.summaryFromDetail(detail),
         rev: detail.rev,
       });
-      return { conflict: false, task: detail };
+      const successor = archived ? await this.ensureRecurringSuccessor(detail) : undefined;
+      return { conflict: false, task: detail, ...(successor ? { successor } : {}) };
     });
+  }
+
+  private async ensureRecurringSuccessor(source: TaskDetail): Promise<TaskDetail | undefined> {
+    if (!source.recurring || source.status !== "Completed") return undefined;
+
+    const sourceId = normalizeId(source.id);
+    for (const candidateId of await this.listIds()) {
+      if (candidateId === sourceId) continue;
+      try {
+        const raw = await fs.readFile(this.taskFile(candidateId), "utf8");
+        const parsed = parseTaskFile(raw);
+        if (
+          parsed.ok &&
+          parsed.frontmatter.recurrence_of &&
+          normalizeId(parsed.frontmatter.recurrence_of) === sourceId
+        ) {
+          return this.readDetailStrict(candidateId);
+        }
+      } catch {
+        // Invalid or concurrently removed tasks cannot be a confirmed successor.
+      }
+    }
+
+    return this.createWithLineage(
+      {
+        title: source.title,
+        project: source.project,
+        category: source.category,
+        severity: source.severity,
+        risk: source.risk,
+        status: "Backlog",
+        status_detail: "",
+        tags: [...source.tags],
+        skills: [...source.skills],
+        recurring: true,
+        depends_on: [],
+        blocks: [],
+        relates_to: [],
+        parent: null,
+        summary: source.summaryMarkdown,
+        scope: source.scopeMarkdown,
+      },
+      sourceId,
+    );
   }
 
   /** Permanently remove an archived task directory after an exact revision check. */
@@ -495,6 +554,8 @@ export class FsTaskRepository {
       archived_at: detail.archived_at,
       tags: detail.tags,
       skills: detail.skills,
+      recurring: detail.recurring,
+      recurrence_of: detail.recurrence_of,
       depends_on: detail.depends_on,
       blocks: detail.blocks,
       relates_to: detail.relates_to,

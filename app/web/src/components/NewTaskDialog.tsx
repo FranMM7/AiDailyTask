@@ -46,6 +46,7 @@ export function NewTaskDialog({
   const [severity, setSeverity] = useState<Level>("Medium");
   const [risk, setRisk] = useState<Level>("Low");
   const [status, setStatus] = useState<Status>("Not started");
+  const [recurring, setRecurring] = useState(false);
   const [summary, setSummary] = useState("");
 
   // Default the project to the first configured one once config arrives / dialog opens.
@@ -59,6 +60,7 @@ export function NewTaskDialog({
     setSeverity("Medium");
     setRisk("Low");
     setStatus("Not started");
+    setRecurring(false);
     setSummary("");
   };
 
@@ -75,6 +77,7 @@ export function NewTaskDialog({
       status_detail: "",
       tags: [],
       skills: [],
+      recurring,
       depends_on: [],
       blocks: [],
       relates_to: [],
@@ -198,6 +201,21 @@ export function NewTaskDialog({
                 </select>
               </label>
             </div>
+
+            <label className="flex cursor-pointer items-start gap-2 rounded-md border border-slate-200 p-2.5 dark:border-slate-800">
+              <input
+                type="checkbox"
+                checked={recurring}
+                onChange={(event) => setRecurring(event.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                <span className="block text-sm font-medium">Recurring task</span>
+                <span className="block text-xs text-slate-500">
+                  Create the next occurrence in Backlog after this one is completed and archived.
+                </span>
+              </span>
+            </label>
 
             <label className="block">
               <span className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-400">

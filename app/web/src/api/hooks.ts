@@ -304,9 +304,10 @@ export function useArchiveTask() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, baseRev }: { id: string; baseRev?: number }) => api.archiveTask(id, baseRev),
-    onSuccess: ({ task }, { id }) => {
+    onSuccess: ({ task, successor }, { id }) => {
       qc.setQueryData<TaskResponse>(["task", id], { task });
       invalidateTaskViews(qc, id);
+      if (successor) invalidateTaskViews(qc, successor.id);
     },
     onError: (err, { id }) => {
       if (err instanceof ApiRequestError && err.conflict) {

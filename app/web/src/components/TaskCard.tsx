@@ -1,4 +1,4 @@
-import { Paperclip, MessageSquare, AlertTriangle } from "lucide-react";
+import { Paperclip, MessageSquare, AlertTriangle, Repeat2 } from "lucide-react";
 import type { TaskSummaryOrInvalid } from "@AiDailyTasks/shared";
 import { useConfig } from "@/api/hooks";
 import { useUiStore } from "@/store/ui";
@@ -59,6 +59,12 @@ export function TaskCard({ task }: { task: TaskSummaryOrInvalid }) {
       ) : null}
 
       <div className="mt-2 flex items-center gap-3 text-xs text-slate-400">
+        {task.recurring && (
+          <span className="inline-flex items-center gap-1" title="Recurring task">
+            <Repeat2 size={12} />
+            Recurring
+          </span>
+        )}
         {task.attachmentCount > 0 && (
           <span className="inline-flex items-center gap-1">
             <Paperclip size={12} />

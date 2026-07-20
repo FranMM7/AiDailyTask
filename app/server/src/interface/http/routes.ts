@@ -293,7 +293,10 @@ export function registerRoutes(app: FastifyInstance, services: Services): void {
         reply.code(409).send(body);
         return;
       }
-      reply.code(200).send({ task: result.task });
+      reply.code(200).send({
+        task: result.task,
+        ...(result.successor ? { successor: result.successor } : {}),
+      });
     } catch (err) {
       handleParamOrError(reply, err);
     }

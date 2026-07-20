@@ -63,6 +63,10 @@ export const FrontmatterSchema = z.object({
   tags: z.array(z.string()).default([]),
   /** Explicit agent execution expectations, selected from the board's configured skills. */
   skills: z.array(z.string()).default([]),
+  /** Create a fresh Backlog successor after this completed task is archived. */
+  recurring: z.boolean().default(false),
+  /** Internal lineage link on a generated successor; not part of the task relationship graph. */
+  recurrence_of: z.string().regex(ID_PATTERN).nullable().default(null),
   depends_on: z.array(z.string()).default([]),
   blocks: z.array(z.string()).default([]),
   relates_to: z.array(z.string()).default([]),
@@ -84,6 +88,7 @@ export const EditableFieldsSchema = FrontmatterSchema.pick({
   completed: true,
   tags: true,
   skills: true,
+  recurring: true,
   depends_on: true,
   blocks: true,
   relates_to: true,
@@ -172,6 +177,7 @@ export const CreateRequestSchema = z.object({
   status_detail: z.string().default(""),
   tags: z.array(z.string()).default([]),
   skills: z.array(z.string()).default([]),
+  recurring: z.boolean().default(false),
   depends_on: z.array(z.string()).default([]),
   blocks: z.array(z.string()).default([]),
   relates_to: z.array(z.string()).default([]),

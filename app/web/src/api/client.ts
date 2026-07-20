@@ -191,8 +191,11 @@ export function patchTask(id: string, body: PatchRequest): Promise<{ task: TaskD
   });
 }
 
-export function archiveTask(id: string, baseRev?: number): Promise<{ task: TaskDetail }> {
-  return request<{ task: TaskDetail }>(`/tasks/${encodeURIComponent(id)}/archive`, {
+export function archiveTask(
+  id: string,
+  baseRev?: number,
+): Promise<{ task: TaskDetail; successor?: TaskDetail }> {
+  return request<{ task: TaskDetail; successor?: TaskDetail }>(`/tasks/${encodeURIComponent(id)}/archive`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(baseRev === undefined ? {} : { baseRev }),

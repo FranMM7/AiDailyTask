@@ -24,6 +24,7 @@ interface FormState {
   status_detail: string;
   tags: string[];
   skills: string[];
+  recurring: boolean;
   depends_on: string;
   blocks: string;
   relates_to: string;
@@ -41,6 +42,7 @@ function toForm(task: TaskDetail): FormState {
     status_detail: task.status_detail ?? "",
     tags: [...task.tags],
     skills: [...task.skills],
+    recurring: task.recurring,
     depends_on: task.depends_on.join(", "),
     blocks: task.blocks.join(", "),
     relates_to: task.relates_to.join(", "),
@@ -144,6 +146,7 @@ export function MetadataPanel({ task }: { task: TaskDetail }) {
       status_detail: form.status_detail,
       tags: form.tags,
       skills: form.skills,
+      recurring: form.recurring,
       depends_on: parseIds(form.depends_on),
       blocks: parseIds(form.blocks),
       relates_to: parseIds(form.relates_to),
@@ -264,6 +267,21 @@ export function MetadataPanel({ task }: { task: TaskDetail }) {
         )}
       </div>
 
+      <label className="flex cursor-pointer items-start gap-2 rounded-md border border-slate-200 p-2.5 dark:border-slate-800">
+        <input
+          type="checkbox"
+          checked={form.recurring}
+          onChange={(event) => set("recurring", event.target.checked)}
+          className="mt-0.5"
+        />
+        <span>
+          <span className="block text-sm font-medium">Recurring task</span>
+          <span className="block text-xs text-slate-500">
+            After this task is completed and archived, create its next occurrence in Backlog.
+          </span>
+        </span>
+      </label>
+
       <div className="grid grid-cols-1 gap-3">
         <Field label="Depends on">
           <input
@@ -345,7 +363,13 @@ export function MetadataPanel({ task }: { task: TaskDetail }) {
             onClick={() =>
               archive.mutate(
                 { id: task.id, baseRev: task.rev },
-                { onSuccess: () => toast("Archived", "success") },
+                {
+                  onSuccess: ({ successor }) =>
+                    toast(
+                      successor ? `Archived · created ${successor.id} in Backlog` : "Archived",
+                      "success",
+                    ),
+                },
               )
             }
             className="inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-100 disabled:opacity-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"

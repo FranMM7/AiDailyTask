@@ -148,6 +148,8 @@ const KEY_ORDER: readonly (keyof Frontmatter)[] = [
   "archived_at",
   "tags",
   "skills",
+  "recurring",
+  "recurrence_of",
   "depends_on",
   "blocks",
   "relates_to",
@@ -165,6 +167,8 @@ function orderedFrontmatter(fm: Frontmatter): Record<string, unknown> {
     if (key === "archived") {
       // Boolean flag; only persisted when true so active tasks stay unchanged.
       if (value === true) o[key] = true;
+    } else if (key === "recurrence_of") {
+      if (value) o[key] = value;
     } else if (OPTIONAL_DATE_KEYS.has(key)) {
       if (value !== undefined && value !== null && value !== "") o[key] = value;
     } else {

@@ -262,6 +262,8 @@ async function main(): Promise<void> {
       archived: false,
       tags: [],
       skills: [],
+      recurring: false,
+      recurrence_of: null,
       depends_on: rel.depends_on.get(t.id) ?? [],
       blocks: rel.blocks.get(t.id) ?? [],
       relates_to: rel.relates_to.get(t.id) ?? [],

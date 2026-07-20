@@ -66,7 +66,7 @@ export const MCP_TOOL_SUMMARY: { name: string; description: string }[] = [
   { name: "get_attachment", description: "Fetch one of a task's attachments by filename (image/text/base64)." },
   { name: "upload_attachment", description: "Upload a text or base64 file to a task." },
   { name: "delete_attachment", description: "Permanently delete one attachment from a task." },
-  { name: "archive_task", description: "Archive a task (hide from the board)." },
+  { name: "archive_task", description: "Archive a task; completed recurring work creates one successor." },
   { name: "unarchive_task", description: "Restore an archived task." },
   { name: "list_projects", description: "List configured projects (id, label, source root)." },
   { name: "get_project", description: "Read one project's metadata, documentation, and code-graph status." },
@@ -135,6 +135,7 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
               updated: t.updatedEffective,
               completed: t.completed,
               archived: t.archived,
+              recurring: t.recurring,
               rev: t.rev,
             }
           : { id: t.id, valid: false, parseError: t.parseError },
@@ -191,6 +192,8 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
         archived: t.archived,
         tags: t.tags,
         skills: t.skills,
+        recurring: t.recurring,
+        recurrence_of: t.recurrence_of,
         depends_on: t.depends_on,
         blocks: t.blocks,
         relates_to: t.relates_to,
@@ -351,6 +354,7 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
         scope: z.string().optional(),
         tags: z.array(z.string()).optional(),
         skills: z.array(z.string()).optional().describe("Agent execution expectations, e.g. Senior frontend engineer"),
+        recurring: z.boolean().optional().describe("Create a new Backlog occurrence when completed and archived"),
         depends_on: z.array(z.string()).optional(),
         blocks: z.array(z.string()).optional(),
         relates_to: z.array(z.string()).optional(),
@@ -383,6 +387,7 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
         status_detail: z.string().optional(),
         tags: z.array(z.string()).optional(),
         skills: z.array(z.string()).optional(),
+        recurring: z.boolean().optional(),
         depends_on: z.array(z.string()).optional(),
         blocks: z.array(z.string()).optional(),
         relates_to: z.array(z.string()).optional(),
@@ -460,13 +465,21 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
     "archive_task",
     {
       title: "Archive task",
-      description: "Archive a task (hides it from the board; kept in the Archive view).",
+      description:
+        "Archive a task (hides it from the board; kept in the Archive view). A completed recurring task creates one Backlog successor.",
       inputSchema: { id: z.string(), baseRev: z.number().optional() },
     },
     async ({ id, baseRev }) => {
       const res = await services.tasks.archive(id, baseRev);
       if (res.conflict) return fail(CONFLICT_MSG);
-      return ok({ id: res.task.id, archived: res.task.archived, rev: res.task.rev });
+      return ok({
+        id: res.task.id,
+        archived: res.task.archived,
+        rev: res.task.rev,
+        ...(res.successor
+          ? { successor: { id: res.successor.id, status: res.successor.status, rev: res.successor.rev } }
+          : {}),
+      });
     },
   );
 
