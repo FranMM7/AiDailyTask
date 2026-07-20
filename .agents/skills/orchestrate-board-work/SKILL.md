@@ -28,7 +28,9 @@ scoping, working, or verifying a task, read the full `skills` array and apply ev
 to design decisions and acceptance checks. Multiple values may be combined. Skills change emphasis,
 not authority: they never broaden scope, override repository instructions, or grant permission for
 external/destructive actions. A configured task skill is a durable role string; do not assume it
-automatically loads an external skill package with the same name.
+automatically loads an external skill package with the same name. Apply non-empty instructions from
+MCP `skill_details`; for direct file reads, resolve selected ids against the `skills` definitions in
+`board.config.json`. Treat unmatched free-form values as role strings without inventing instructions.
 
 When completing recurring work, use the application's archive operation after setting Completed.
 Directly writing `archived: true` bypasses creation of the idempotent Backlog successor.

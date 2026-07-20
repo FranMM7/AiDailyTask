@@ -136,6 +136,7 @@ database.
   **Save** to write it back.
 - **Set execution expectations:** add one or more **Skills** in the drawer. Configured skills appear
   as quick-add suggestions, while free-form values remain available for project-specific roles.
+  Each configured skill can pair its short title with full agent instructions in **Settings**.
 - **Log progress:** add a note in the **Observations** box — it's appended with a timestamp and
   author, newest last, so a task carries its own history.
 - **Attach files:** drag files onto the drawer's upload area, or **paste a screenshot directly into an
@@ -153,15 +154,19 @@ Tags and skills are both string arrays stored in task frontmatter, but they serv
 | Field | Purpose | What an agent gets |
 | --- | --- | --- |
 | `tags` | Lightweight classification and exact-tag filtering, such as `billing`, `a11y`, or `release` | Useful discovery and domain signals; tags do not change the model's capabilities or assign a role by themselves |
-| `skills` | Explicit expectations for *how* to approach the task, such as `Senior frontend engineer` and `Security engineer` | The execution lenses to apply while planning, implementing, and verifying the task; multiple skills may be combined |
+| `skills` | Explicit expectations for *how* to approach the task, such as `Senior frontend engineer` and `Security engineer` | The selected titles plus each configured skill's full execution instructions; multiple skills may be combined |
 
-MCP `get_task` returns both `tags` and `skills`; `create_task` and `update_task` accept both. The
-compact `list_tasks` result does not repeat those arrays, but it can filter by one exact `tag`, after
-which the agent can call `get_task` for full context. Skills are durable task instructions, not a
-hidden system prompt: the board exposes them and the included agent guidance tells compatible agents
-to honor them without expanding the task's authority or scope.
+MCP `get_task` returns `tags`, the selected `skills`, and resolved `skill_details` containing each
+configured title and instruction block; `create_task` and `update_task` accept the two string arrays.
+The compact `list_tasks` result does not repeat those arrays, but it can filter by one exact `tag`,
+after which the agent can call `get_task` for full context. Skills are durable, visible task
+instructions—not a hidden system prompt—and never expand the task's authority or scope. A selected
+free-form skill that is not in Settings remains in `skills` and appears as unconfigured in
+`skill_details` with an empty instruction block.
 
 ![A task with two execution skills selected](docs/screenshots/task-skills.png)
+
+![Configured skill titles with full agent instructions](docs/screenshots/skill-instructions.png)
 
 ### Recurring tasks
 
@@ -296,8 +301,9 @@ site can match a focused workflow without changing private task files.
 - Hide or restore Backlog, Table, Graph, Code map, Projects, Archive, Stats, and Connect navigation
   tabs. Hidden routes remain reachable by direct URL, so a view cannot be accidentally destroyed.
 - Create, edit, recolor, relabel, reorder, or remove statuses, categories, skills, severities, and
-  risks. `Backlog` and `Completed` ids are protected because recurrence and completion behavior rely
-  on them; their labels and colors remain editable.
+  risks. Skills use a concise title plus a multi-line agent-instructions field. `Backlog` and
+  `Completed` ids are protected because recurrence and completion behavior rely on them; their
+  labels and colors remain editable.
 
 Changing a vocabulary id does not rewrite existing task files. Rename deliberately or update the
 affected tasks afterward. Because `board.config.json` is the repository's shareable template,
@@ -383,8 +389,9 @@ attachment upload/read/delete, archive/restore, project metadata and documentati
 Project-context tools include `get_project`, `add_project`, `update_project`,
 `get_project_documentation`, `update_project_documentation`, and `import_project_readme`.
 `get_config` / `update_config` expose the same vocabulary and visibility settings as the Settings
-page. Task reads include tags, execution skills, recurrence state, and successor lineage; archiving a
-completed recurring task reports the successor id in the tool result.
+page. Task reads include tags, selected execution skills, resolved `skill_details`, recurrence state,
+and successor lineage; archiving a completed recurring task reports the successor id in the tool
+result.
 
 It also exposes the **Code map** to agents: `generate_code_graph`, `get_code_graph` (status +
 overview), and `query_code_graph` (a file or symbol's dependencies/dependents, filtered by relation —

@@ -9,6 +9,8 @@ All notable changes to AiDailyTasks are documented here. The project follows
 
 - Task `skills` metadata with multi-value editing, configured suggestions, deterministic Markdown
   persistence, Markdown export, and MCP create/read/update support.
+- Configured skill titles with multi-line agent instructions. MCP task reads resolve every selected
+  skill into `skill_details` while preserving free-form and legacy task values.
 - A Settings view beside Export for board-column and navigation visibility plus local CRUD of
   statuses, categories, skills, severities, and risks. Backlog and Completed ids are protected.
 - Task-graph status filtering, independent-task visibility, URL-backed focus, recursive
@@ -17,8 +19,8 @@ All notable changes to AiDailyTasks are documented here. The project follows
   index. The advisory never runs indexing or a graph query automatically.
 - Recurring tasks. Archiving completed recurring work creates one clean Backlog successor with
   lineage-based duplicate prevention and reports the successor through REST, MCP, and UI feedback.
-- Six verified screenshots covering task skills, settings/vocabulary, configurable board columns,
-  graph focus, and recurring successors.
+- Seven verified screenshots covering task skills and instructions, settings/vocabulary,
+  configurable board columns, graph focus, and recurring successors.
 
 ### Changed
 
@@ -29,11 +31,15 @@ All notable changes to AiDailyTasks are documented here. The project follows
   skills to influence planning, implementation, and verification without broadening authority.
 - README setup now starts from a clean clone and documents the repository's private, git-ignored
   board/project data model.
+- Settings vocabulary rows retain focus while their editable id/title changes, including newly
+  added skills, so continuous typing no longer drops after the first character.
 
 ### Compatibility and verification
 
 - Existing task files remain valid: missing `skills` becomes `[]`, missing `recurring` becomes
   `false`, and missing recurrence lineage becomes `null`.
+- Existing skill definitions without `instructions` remain valid. A legacy skill label that differs
+  from its id is surfaced as the initial instruction text when the new editor is opened.
 - Workspace typecheck and production builds passed. Browser coverage passed at 1440×1000 and
   390×844 with no console/page errors. Stdio MCP checks covered tags/skills, settings, Graphify
   hint side effects, and concurrent recurring-task archive behavior.

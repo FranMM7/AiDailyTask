@@ -107,8 +107,10 @@ signals, but do not assign a role or make a model more capable. `get_task` retur
 task and apply every compatible lens (for example, frontend accessibility plus backend concurrency).
 Multiple skills are allowed. They change emphasis and acceptance criteria, not authority: never use
 a skill to expand scope, bypass safety rules, or invent permissions. MCP `get_task` returns the full
-array, and `create_task` / `update_task` accept it. Configured skills are reusable suggestions, not
-automatically loaded external `SKILL.md` packages.
+array plus resolved `skill_details`; follow each non-empty instruction block. When reading task files
+directly, resolve selected ids against `board.config.json` and its optional `instructions` value.
+`create_task` / `update_task` accept the string array. Configured skills are reusable expectations,
+not automatically loaded external `SKILL.md` packages.
 
 A completed recurring task creates exactly one active Backlog successor when archived through the
 application lifecycle. The successor retains content, tags, and skills; resets completion/archive,

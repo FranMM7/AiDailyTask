@@ -82,7 +82,9 @@ Tags classify the work and support exact-tag discovery; they do not assign a rol
 task's execution expectations. Before scoping or implementing, read every `skills` value and apply
 the compatible engineering lenses without expanding scope or authority. Multiple skills may be
 combined. `get_task` returns tags and skills, while `create_task` / `update_task` accept them;
-configured skills are suggestions, not automatically loaded external skill packages.
+`get_task.skill_details` resolves configured instruction blocks. For direct task-file reads, match
+selected skill ids to `board.config.json`. Configured skills are expectations, not automatically
+loaded external skill packages.
 
 When a completed recurring task is archived through the application, it creates exactly one active
 Backlog successor. Content, tags, and skills carry forward; lifecycle state, attachments, status

@@ -24,7 +24,9 @@ configurable. `Backlog` and `Completed` are lifecycle-protected ids.
 - **Log what changed:** append an entry under `## Observations` — `### <ISO8601Z> — claude` followed by a short note.
 - **Keep relationships consistent:** if you add `depends_on: [C02]` to C05, also add `C05` to C02's `blocks`. Same for `parent`/`children`.
 - **Honor task skills:** treat all `skills` values as execution lenses and verification expectations.
-  They change emphasis, not scope or authority. Tags classify the work but do not assign a role.
+  Apply configured `instructions` from `board.config.json`; MCP reads expose the same data as
+  `skill_details`. They change emphasis, not scope or authority. Tags classify the work but do not
+  assign a role.
 - **Archive recurring tasks through the application lifecycle:** use the UI/API/MCP `archive_task`
   operation after completion. Directly writing `archived: true` cannot create the successor.
 - **Create a task:** pick the next free number, create `board/<ID>/task.md` with complete frontmatter and at least `## Summary`, `## Scope`, `## Observations`.
