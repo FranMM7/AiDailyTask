@@ -465,8 +465,12 @@ tool count, active sessions, session limit, PID, and uptime.
 To verify the distinction, concurrent clients, and restart recovery against disposable local data:
 
 ```powershell
+npm test
 npm run verify:mcp-session-recovery
 ```
+
+`npm test` runs the fast unit matrix for missing, active, and expired session states. The recovery
+command is the slower integration check that starts two real server processes around a restart.
 
 An MCP tool cannot safely restart its own unavailable transport. Recovery must happen through the
 agent host's reconnect action or an out-of-band shell command. Do not claim queued observations were

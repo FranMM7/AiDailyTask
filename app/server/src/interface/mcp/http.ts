@@ -15,6 +15,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import type { McpInfo } from "@AiDailyTasks/shared";
 import { buildMcpServer, MCP_TOOL_SUMMARY } from "./server";
+import { mcpSessionFailure } from "./sessionLookup";
 import type { Services } from "../http/routes";
 import type { Env } from "../../env";
 
@@ -88,18 +89,17 @@ export function registerMcpHttp(app: FastifyInstance, services: Services, env: E
       const sessionId = req.headers["mcp-session-id"] as string | undefined;
       let entry = sessionId ? transports.get(sessionId) : undefined;
       let transport = entry?.transport;
+      const sessionFailure = mcpSessionFailure(
+        sessionId,
+        Boolean(transport),
+        isInitializeRequest(req.body),
+      );
+      if (sessionFailure) {
+        sendJsonError(reply, sessionFailure.code, sessionFailure.httpStatus, sessionFailure.message);
+        return;
+      }
 
       if (!transport) {
-        // MCP session contract: a supplied id that is no longer known means the
-        // session expired, so 404 tells compliant clients to initialize again.
-        if (sessionId) {
-          sendJsonError(reply, -32000, 404, "MCP session not found — initialize a new session.");
-          return;
-        }
-        if (!isInitializeRequest(req.body)) {
-          sendJsonError(reply, -32000, 400, "No valid session — send an initialize request first.");
-          return;
-        }
         reapSessions();
         if (transports.size >= MAX_SESSIONS) {
           sendJsonError(reply, -32000, 503, "MCP session limit reached — retry after closing an existing session.");
@@ -131,16 +131,14 @@ export function registerMcpHttp(app: FastifyInstance, services: Services, env: E
   const handleSession = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     reply.hijack();
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
-    if (!sessionId) {
-      sendJsonError(reply, -32000, 400, "Missing mcp-session-id.");
+    const entry = sessionId ? transports.get(sessionId) : undefined;
+    const sessionFailure = mcpSessionFailure(sessionId, Boolean(entry), false);
+    if (sessionFailure) {
+      sendJsonError(reply, sessionFailure.code, sessionFailure.httpStatus, sessionFailure.message);
       return;
     }
-    const entry = transports.get(sessionId);
-    // Keep missing-header (bad request) distinct from expired-id (not found).
-    if (!entry) {
-      sendJsonError(reply, -32000, 404, "MCP session not found — initialize a new session.");
-      return;
-    }
+    // The classifier guarantees an entry when no failure is returned.
+    if (!entry || !sessionId) return;
     entry.lastActivity = Date.now();
     if (req.method === "GET") entry.openStreams += 1;
     try {

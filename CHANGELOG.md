@@ -10,7 +10,8 @@ All notable changes to AiDailyTasks are documented here. The project follows
 - Streamable-HTTP requests with an unknown or expired `mcp-session-id` now return 404, while missing
   required ids remain 400. This gives compliant MCP clients the required signal to initialize a new
   session after server restart, session deletion, or idle expiry. A repeatable verification command
-  covers two concurrent clients and a real process restart.
+  covers two concurrent clients and a real process restart, backed by unit tests for the session
+  status decision matrix.
 
 ### Added
 
