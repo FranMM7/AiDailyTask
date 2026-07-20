@@ -24,14 +24,15 @@ board/<ID>/task.md      YAML frontmatter + markdown body
 board/<ID>/files/       that task's attachments (logs, screenshots, PDFs, scope docs)
 board/_meta/            overview, relationships narrative, runtime evidence, unfiled docs, import report
 exports/                generated markdown exports
-board.config.json       vocabulary, task skills, board columns, and navigation — tracked template
+board.config.json       local vocabulary, task skills, board columns, and navigation (git-ignored)
+board.config.json.template tracked defaults copied on first server startup
 projects.json           the project list — LOCAL & git-ignored (private); add via UI or by editing it
 project-docs/<project>/  agent instructions + imported README snapshots — LOCAL & git-ignored
 ```
 
 > **Privacy:** `board/`, `exports/`, and `projects.json` are git-ignored — this tracker is
-> localhost-only and its task/project data is never committed. Only the code and `board.config.json`
-> (vocabulary/colors) are version-controlled.
+> localhost-only and its task/project data is never committed. Only the code and
+> `board.config.json.template` defaults are version-controlled.
 
 `<ID>` is `C` + a zero-padded number (`C01`, `C09`, `C56`). The folder name is authoritative;
 frontmatter `id` must match it.

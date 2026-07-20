@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { Eye, EyeOff, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Eye, EyeOff, Pencil, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
 import type { BoardConfig, EnumDef } from "@AiDailyTasks/shared";
 import { useConfig, useUpdateConfig } from "@/api/hooks";
 import { toast } from "@/store/toast";
@@ -120,13 +120,30 @@ function VocabularyEditor({
 }
 
 function SkillEditor({ values, onChange }: { values: EnumDef[]; onChange: (values: EnumDef[]) => void }) {
+  const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
+  const [editing, setEditing] = useState<number | null>(null);
   const update = (index: number, patch: Partial<EnumDef>) =>
     onChange(values.map((value, current) => (current === index ? { ...value, ...patch } : value)));
   const add = () => {
     let suffix = values.length + 1;
     let id = "New skill";
     while (values.some((value) => value.id === id)) id = `New skill ${suffix++}`;
+    const index = values.length;
     onChange([...values, { id, label: id, instructions: "", color: "#64748b" }]);
+    setEditing(index);
+    setExpanded((current) => new Set(current).add(index));
+  };
+  const remove = (index: number) => {
+    onChange(values.filter((_, current) => current !== index));
+    setEditing((current) => current === index ? null : current !== null && current > index ? current - 1 : current);
+    setExpanded((current) => new Set([...current].flatMap((item) => item === index ? [] : [item > index ? item - 1 : item])));
+  };
+  const toggleExpanded = (index: number) => {
+    setExpanded((current) => {
+      const next = new Set(current);
+      next.has(index) ? next.delete(index) : next.add(index);
+      return next;
+    });
   };
 
   return (
@@ -134,49 +151,39 @@ function SkillEditor({ values, onChange }: { values: EnumDef[]; onChange: (value
       title="Skills"
       description="Give each reusable execution role a title and the full instructions an agent should follow."
     >
-      <div className="space-y-3">
-        {values.map((value, index) => (
-          <div
-            key={index}
-            className="grid grid-cols-[minmax(0,1fr)_2.5rem_2.25rem] gap-2 rounded-lg border border-slate-200 p-3 dark:border-slate-800"
-          >
-            <label className="min-w-0 text-xs font-medium text-slate-500">
-              Skill title
-              <input
-                aria-label={`Skills title ${index + 1}`}
-                value={value.id}
-                onChange={(event) => update(index, { id: event.target.value, label: event.target.value })}
-                className="mt-1 block w-full min-w-0 rounded-md border border-slate-300 bg-transparent px-2 py-1.5 text-sm font-normal text-slate-950 dark:border-slate-700 dark:text-slate-50"
-              />
-            </label>
-            <input
-              aria-label={`Skills color ${index + 1}`}
-              type="color"
-              value={value.color}
-              onChange={(event) => update(index, { color: event.target.value })}
-              className="mt-5 h-8 w-10 cursor-pointer rounded border border-slate-300 bg-transparent p-0.5 dark:border-slate-700"
-            />
-            <button
-              type="button"
-              aria-label={`Remove ${value.id}`}
-              onClick={() => onChange(values.filter((_, current) => current !== index))}
-              className="mt-5 rounded-md p-2 text-slate-400 hover:bg-red-500/10 hover:text-red-500"
-            >
-              <Trash2 size={15} />
-            </button>
-            <label className="col-span-3 text-xs font-medium text-slate-500">
-              Agent instructions
-              <textarea
-                aria-label={`Skills instructions ${index + 1}`}
-                value={value.instructions ?? ""}
-                onChange={(event) => update(index, { instructions: event.target.value })}
-                placeholder="Describe how the agent should plan, implement, and verify work using this skill."
-                rows={3}
-                className="mt-1 block w-full resize-y rounded-md border border-slate-300 bg-transparent px-2 py-1.5 text-sm font-normal text-slate-950 dark:border-slate-700 dark:text-slate-50"
-              />
-            </label>
-          </div>
-        ))}
+      <div className="space-y-2">
+        {values.map((value, index) => {
+          const isEditing = editing === index;
+          const isExpanded = expanded.has(index) || isEditing;
+          return (
+            <div key={index} className="overflow-hidden rounded-lg border border-slate-200 dark:border-slate-800">
+              <div className="flex min-h-11 items-center gap-2 px-3 py-2">
+                <button type="button" aria-label={`${isExpanded ? "Collapse" : "Expand"} ${value.id}`} aria-expanded={isExpanded} onClick={() => toggleExpanded(index)} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
+                  {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                </button>
+                <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: value.color }} />
+                <span className="min-w-0 flex-1 truncate text-sm font-medium">{value.id}</span>
+                <button type="button" aria-label={`${isEditing ? "Stop editing" : "Edit"} ${value.id}`} onClick={() => { setEditing(isEditing ? null : index); setExpanded((current) => new Set(current).add(index)); }} className="rounded-md p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200">
+                  {isEditing ? <X size={15} /> : <Pencil size={15} />}
+                </button>
+              </div>
+              {isExpanded ? (
+                <div className="border-t border-slate-200 px-3 py-3 dark:border-slate-800">
+                  {isEditing ? (
+                    <div className="grid grid-cols-[minmax(0,1fr)_2.5rem_2.25rem] gap-2">
+                      <label className="min-w-0 text-xs font-medium text-slate-500">Skill title<input aria-label={`Skills title ${index + 1}`} value={value.id} onChange={(event) => update(index, { id: event.target.value, label: event.target.value })} className="mt-1 block w-full min-w-0 rounded-md border border-slate-300 bg-transparent px-2 py-1.5 text-sm font-normal text-slate-950 dark:border-slate-700 dark:text-slate-50" /></label>
+                      <input aria-label={`Skills color ${index + 1}`} title="Skill color" type="color" value={value.color} onChange={(event) => update(index, { color: event.target.value })} className="mt-5 h-8 w-10 cursor-pointer rounded border border-slate-300 bg-transparent p-0.5 dark:border-slate-700" />
+                      <button type="button" aria-label={`Remove ${value.id}`} onClick={() => remove(index)} className="mt-5 rounded-md p-2 text-slate-400 hover:bg-red-500/10 hover:text-red-500"><Trash2 size={15} /></button>
+                      <label className="col-span-3 text-xs font-medium text-slate-500">Agent instructions<textarea aria-label={`Skills instructions ${index + 1}`} value={value.instructions ?? ""} onChange={(event) => update(index, { instructions: event.target.value })} placeholder="Describe how the agent should plan, implement, and verify work using this skill." rows={4} className="mt-1 block w-full resize-y rounded-md border border-slate-300 bg-transparent px-2 py-1.5 text-sm font-normal text-slate-950 dark:border-slate-700 dark:text-slate-50" /></label>
+                    </div>
+                  ) : (
+                    <p className="whitespace-pre-wrap text-sm leading-6 text-slate-600 dark:text-slate-300">{value.instructions?.trim() || "No agent instructions yet."}</p>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
       <button type="button" onClick={add} className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-2.5 py-1.5 text-sm hover:bg-slate-100 dark:border-slate-700 dark:hover:bg-slate-800">
         <Plus size={14} /> Add skill
@@ -264,9 +271,11 @@ export function SettingsView() {
         <div className="grid gap-4 lg:grid-cols-2">
           <VocabularyEditor title="Statuses" description="Backlog and Completed ids are protected because lifecycle behavior depends on them." singular="status" values={draft.statuses} protectedIds={PROTECTED_STATUSES} onChange={(statuses) => patch({ statuses })} />
           <VocabularyEditor title="Categories" description="Organize work by its primary kind." singular="category" values={draft.categories} onChange={(categories) => patch({ categories })} />
-          <SkillEditor values={draft.skills} onChange={(skills) => patch({ skills })} />
           <VocabularyEditor title="Severities" description="Ordered impact levels; order here determines rank." singular="severity" values={draft.severities} onChange={(severities) => patch({ severities })} />
           <VocabularyEditor title="Risks" description="Ordered delivery-risk levels; order here determines rank." singular="risk" values={draft.risks} onChange={(risks) => patch({ risks })} />
+          <div className="lg:col-span-2">
+            <SkillEditor values={draft.skills} onChange={(skills) => patch({ skills })} />
+          </div>
         </div>
       </div>
     </div>

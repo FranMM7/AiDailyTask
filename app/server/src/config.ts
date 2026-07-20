@@ -2,7 +2,7 @@
  * Loads and validates board.config.json into a BoardConfig, and exposes derived
  * lookups (value sets, status order, level rank, colors). Cached, with reload().
  */
-import { readFileSync } from "node:fs";
+import { copyFileSync, constants, readFileSync } from "node:fs";
 import { rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
@@ -67,7 +67,20 @@ export class ConfigService {
   private statusOrders = new Map<string, number>();
 
   constructor(private readonly env: Env) {
+    this.ensureLocalConfig();
     this.config = this.loadAndValidate();
+  }
+
+  private ensureLocalConfig(): void {
+    try {
+      copyFileSync(this.env.configTemplatePath, this.env.configPath, constants.COPYFILE_EXCL);
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "EEXIST") return;
+      throw new Error(
+        `Failed to initialize board.config.json from ${this.env.configTemplatePath}: ${(err as Error).message}`,
+      );
+    }
   }
 
   private loadAndValidate(): BoardConfig {
