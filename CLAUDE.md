@@ -15,7 +15,7 @@ board/<ID>/task.md      YAML frontmatter + markdown body
 board/<ID>/files/       that task's attachments (logs, screenshots, PDFs, scope docs)
 board/_meta/            overview, relationships narrative, runtime evidence, unfiled docs, import report
 exports/                generated markdown exports
-board.config.json       the enum vocabulary (statuses, categories, severities) — tracked template
+board.config.json       vocabulary, task skills, board columns, and navigation — tracked template
 projects.json           the project list — LOCAL & git-ignored (private); add via UI or by editing it
 project-docs/<project>/  agent instructions + imported README snapshots — LOCAL & git-ignored
 ```
@@ -39,7 +39,12 @@ status_detail: ""           # free-text nuance ("awaiting VS build", "parked", d
 created: 2026-06-29
 updated: 2026-07-07
 completed: 2026-07-07        # only when status = Completed
+archived: false              # usually omitted while active
+# archived_at: 2026-07-08    # only when archived; set by application lifecycle
 tags: []
+skills: [Senior backend engineer, Security engineer]
+recurring: false             # completed + application archive creates a Backlog successor
+recurrence_of: null          # internal lineage on an automatically generated successor
 depends_on: [C01, C02]
 blocks: []
 relates_to: [C13]
@@ -65,12 +70,30 @@ You can edit these files **directly** with your normal Read/Edit/Write tools —
 - **Update a status / field:** edit the frontmatter of `board/<ID>/task.md`. Bump `updated:` to today; set `completed:` when moving to Completed. Add a line under `## Observations` describing what changed.
 - **Add a task:** create `board/<ID>/task.md` (next free number) with full frontmatter + at least a `## Summary`. Create `board/<ID>/files/` if you have attachments.
 - **Read a task's attachments:** they're in `board/<ID>/files/` — open them directly instead of asking Francis to paste logs/screenshots into chat.
+- **Archive recurring work through the UI/API/MCP:** use `archive_task` after completion. A direct
+  `archived: true` file edit bypasses successor creation.
 
-Prefer the API only when you specifically want optimistic-concurrency/live behavior; direct file edits are the normal path and always safe.
+Prefer the API only when you specifically want optimistic-concurrency/live behavior; direct file
+edits are the normal path, with the recurring-archive lifecycle exception above.
+
+## Tags, skills, and recurrence
+
+Tags classify the work and support exact-tag discovery; they do not assign a role. Skills are the
+task's execution expectations. Before scoping or implementing, read every `skills` value and apply
+the compatible engineering lenses without expanding scope or authority. Multiple skills may be
+combined. `get_task` returns tags and skills, while `create_task` / `update_task` accept them;
+configured skills are suggestions, not automatically loaded external skill packages.
+
+When a completed recurring task is archived through the application, it creates exactly one active
+Backlog successor. Content, tags, and skills carry forward; lifecycle state, attachments, status
+detail, and graph relationships reset. `recurrence_of` records the generated task's lineage.
 
 ## Vocabulary
 
-Statuses, categories, and severity/risk levels are defined once in `board.config.json`. Status columns: **Not started · Scoped · In progress · Completed**. Category: **Refactor · Bug · Feature · UX · Arch · Org**. Severity/Risk: **Low · Low–Med · Medium · Med–High · High**.
+Statuses, categories, skills, severity/risk levels, board columns, and visible navigation tabs are
+defined in `board.config.json` and editable from **Settings** beside Export. Default status columns:
+**Not started · Scoped · In progress · Completed**, with **Backlog** parked off-board unless enabled.
+`Backlog` and `Completed` ids are lifecycle-protected. Category defaults: **Refactor · Bug · Feature · UX · Arch · Org**. Severity/Risk defaults: **Low · Low–Med · Medium · Med–High · High**.
 
 **Projects** live in the local, git-ignored `projects.json` (a flat `[{ "id", "label" }]` array) — **Sample** by default. Add one via the UI ("＋" next to the project picker) or by editing `projects.json` directly; the server watches the file and the browser refreshes live. New tasks created from the UI get an auto-incremented id (server allocates `max + 1`).
 
@@ -78,6 +101,8 @@ The **Projects** tab holds project metadata, source/indexer settings, maintained
 and imported root README snapshots. Before substantial project work, use `get_project`; update durable
 guidance with `update_project_documentation`, import/refresh README context with
 `import_project_readme`, and rebuild source-derived context with `refresh_code_graph`.
+The first eligible `get_task` read in an MCP session may include a ready-Graphify study hint; it is
+advisory and does not generate, refresh, or query the graph automatically.
 
 ## MCP recovery
 

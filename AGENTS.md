@@ -24,7 +24,7 @@ board/<ID>/task.md      YAML frontmatter + markdown body
 board/<ID>/files/       that task's attachments (logs, screenshots, PDFs, scope docs)
 board/_meta/            overview, relationships narrative, runtime evidence, unfiled docs, import report
 exports/                generated markdown exports
-board.config.json       the enum vocabulary (statuses, categories, severities) — tracked template
+board.config.json       vocabulary, task skills, board columns, and navigation — tracked template
 projects.json           the project list — LOCAL & git-ignored (private); add via UI or by editing it
 project-docs/<project>/  agent instructions + imported README snapshots — LOCAL & git-ignored
 ```
@@ -51,7 +51,12 @@ status_detail: ""           # free-text nuance ("awaiting build", "parked", date
 created: 2026-06-29
 updated: 2026-07-07
 completed: 2026-07-07        # only when status = Completed
+archived: false              # usually omitted while active
+# archived_at: 2026-07-08    # only when archived; set by application lifecycle
 tags: []
+skills: [Senior backend engineer, Security engineer]  # execution expectations; zero or more
+recurring: false             # completed + archived creates a new Backlog occurrence
+recurrence_of: null          # internal lineage on an automatically generated successor
 depends_on: [C01, C02]
 blocks: []
 relates_to: [C13]
@@ -85,9 +90,29 @@ files and pushes changes to the browser live. Two common flows:
   asking the human to paste logs/screenshots into chat.
 - **Keep relationships consistent:** if you add `depends_on: [C02]` to C05, also add `C05` to C02's
   `blocks`. Same for `parent` / `children`.
+- **Archive recurring work through the UI, HTTP, or MCP:** use `archive_task` for a completed task
+  with `recurring: true`. Directly adding `archived: true` bypasses the repository lifecycle and
+  therefore cannot create its Backlog successor.
 
 Prefer the HTTP/MCP API only when you specifically want optimistic-concurrency / live behavior;
-direct file edits are the normal path and always safe.
+direct file edits are the normal path, with the recurring-archive lifecycle exception above.
+
+## Tags and task skills
+
+`tags` classify *what* the work is. They support exact-tag filtering and provide lightweight domain
+signals, but do not assign a role or make a model more capable. `get_task` returns tags; compact
+`list_tasks` can filter by one exact tag but does not repeat the full array.
+
+`skills` state *how* the work is expected to be executed. Read them before scoping or implementing a
+task and apply every compatible lens (for example, frontend accessibility plus backend concurrency).
+Multiple skills are allowed. They change emphasis and acceptance criteria, not authority: never use
+a skill to expand scope, bypass safety rules, or invent permissions. MCP `get_task` returns the full
+array, and `create_task` / `update_task` accept it. Configured skills are reusable suggestions, not
+automatically loaded external `SKILL.md` packages.
+
+A completed recurring task creates exactly one active Backlog successor when archived through the
+application lifecycle. The successor retains content, tags, and skills; resets completion/archive,
+status detail, attachments, and task relationships; and records `recurrence_of` for idempotency.
 
 ## Finding your way around
 
@@ -99,7 +124,9 @@ direct file edits are the normal path and always safe.
 - **Project context:** use `get_project` before substantial project work. Maintain build,
   architecture, convention, and safety guidance with `update_project_documentation`; refresh the
   root README snapshot with `import_project_readme`; refresh source-derived Graphify/built-in data
-  with `refresh_code_graph`. Never hand-edit generated graph files.
+  with `refresh_code_graph`. Never hand-edit generated graph files. The first eligible `get_task`
+  read in a session may include a ready-Graphify study hint; it is advisory and runs nothing by
+  itself.
 
 ## MCP recovery for agents
 
@@ -119,9 +146,11 @@ the agent host or shell. Reinitialize invalid HTTP sessions instead of retrying 
 
 ## Vocabulary
 
-Statuses, categories, and severity/risk levels are defined once in `board.config.json`.
+Statuses, categories, skills, severity/risk levels, board-column visibility, and navigation visibility
+are defined once in `board.config.json` and editable from **Settings** beside Export.
 Status columns: **Not started · Scoped · In progress · Completed** (plus **Backlog**, parked off the
-board). Category: **Refactor · Bug · Feature · UX · Arch · Org**. Severity/Risk:
+board unless configured as a column). `Backlog` and `Completed` ids are lifecycle-protected; other
+vocabulary values may be added or removed. Category defaults: **Refactor · Bug · Feature · UX · Arch · Org**. Severity/Risk defaults:
 **Low · Low–Med · Medium · Med–High · High** (compound values use an EN DASH `–`).
 
 **Projects** live in the local, git-ignored `projects.json` (a flat `[{ "id", "label" }]` array) —

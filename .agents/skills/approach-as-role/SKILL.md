@@ -18,6 +18,9 @@ Read `AGENTS.md`, the target board task, its attachments, and relevant code befo
 - `security`: Threat-model trust boundaries, authentication/authorization, input handling, secrets, data exposure, dependency risk, and abuse cases.
 
 If no role is named, use `engineer`. Combine lenses only when explicitly requested or when a cross-layer task clearly requires `fullstack`.
+When the target task supplies `skills`, treat those values as explicit role requests and map each to
+the closest lens above; compatible task skills may be combined. They change engineering emphasis,
+not scope, safety rules, or authority.
 
 ## Deliver
 

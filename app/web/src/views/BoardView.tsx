@@ -97,8 +97,8 @@ export function BoardView() {
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
 
-  // Backlog has its own tab, so it is intentionally NOT rendered as a board column;
-  // tasks parked there stay off the active board (they're still bucketed below, just hidden).
+  // Backlog has its own tab and stays off the board by default; Settings can opt it into
+  // the Kanban alongside any other configured, non-hidden status.
   const statusDefs = useMemo(() => {
     const hidden = new Set(config?.board?.hiddenColumns ?? []);
     const defs = (config?.statuses ?? []).filter(

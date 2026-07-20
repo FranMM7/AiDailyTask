@@ -4,8 +4,8 @@
 
 ![The board — a drag-and-drop Kanban of the sample project](docs/screenshots/board.png)
 
-> The screenshots in this README are of a small **sample** board included for illustration; your own
-> task data stays local and git-ignored.
+> The screenshots in this README come from disposable **sample** boards created for verification;
+> the repository ships without private task data, and your own board stays local and git-ignored.
 
 ---
 
@@ -62,6 +62,13 @@ missing when all I had was a chat window and a giant text file.
 - **Stats** — cycle time, throughput, and how long things sit open.
 - **Rich task detail** — Markdown summary + scope, a timestamped observations log, and attachments
   (paste a screenshot straight into a note and it's saved and embedded).
+- **Task execution skills** — attach one or more role expectations (for example, senior frontend,
+  backend, QA, security, or DevOps) so an agent receives both the work context and the expected
+  execution lens.
+- **Workspace settings** — show or hide board columns and navigation tabs, and locally manage
+  statuses, categories, skills, severity, risk, labels, colors, and ordering.
+- **Recurring work** — mark a task as recurring; archiving it after completion creates exactly one
+  clean successor in Backlog.
 - **Filters, search, projects, and one-click Markdown export.**
 - **Live sync** via server-sent events, with optimistic concurrency + atomic writes so the UI and
   the agent can edit the same task without clobbering each other.
@@ -74,13 +81,20 @@ The **dependency graph** and **stats** views:
 
 ## Quick start
 
+Prerequisites: Node.js 20 or newer and npm. Clone the repository, then install the workspace:
+
 ```bash
+git clone https://github.com/FranMM7/AiDailyTask.git
+cd AiDailyTask
 npm install            # once, from the repo root (npm workspaces)
 npm run dev            # server on :4317 + Vite UI on :5173
 ```
 
-Open **http://localhost:5173**, create a task, and you're running. For daily use without the dev
-server:
+Open **http://localhost:5173**, add a project, and create your first task. The app creates the local,
+git-ignored board and project files automatically; the repository intentionally ships without
+anyone else's task data.
+
+For daily use without the Vite development server:
 
 ```bash
 npm run build          # build the web UI
@@ -120,6 +134,8 @@ database.
   can edit the title, all the metadata, the Markdown **Summary** and **Scope**, and the relationship
   fields (`depends_on`, `blocks`, `relates_to`, `parent` — comma-separated ids like `C01, C02`). Click
   **Save** to write it back.
+- **Set execution expectations:** add one or more **Skills** in the drawer. Configured skills appear
+  as quick-add suggestions, while free-form values remain available for project-specific roles.
 - **Log progress:** add a note in the **Observations** box — it's appended with a timestamp and
   author, newest last, so a task carries its own history.
 - **Attach files:** drag files onto the drawer's upload area, or **paste a screenshot directly into an
@@ -129,6 +145,37 @@ database.
   restores with one click.
 
 ![The task detail drawer — summary, scope, observations, attachments, and editable metadata](docs/screenshots/task-drawer.png)
+
+### Tags versus execution skills
+
+Tags and skills are both string arrays stored in task frontmatter, but they serve different jobs:
+
+| Field | Purpose | What an agent gets |
+| --- | --- | --- |
+| `tags` | Lightweight classification and exact-tag filtering, such as `billing`, `a11y`, or `release` | Useful discovery and domain signals; tags do not change the model's capabilities or assign a role by themselves |
+| `skills` | Explicit expectations for *how* to approach the task, such as `Senior frontend engineer` and `Security engineer` | The execution lenses to apply while planning, implementing, and verifying the task; multiple skills may be combined |
+
+MCP `get_task` returns both `tags` and `skills`; `create_task` and `update_task` accept both. The
+compact `list_tasks` result does not repeat those arrays, but it can filter by one exact `tag`, after
+which the agent can call `get_task` for full context. Skills are durable task instructions, not a
+hidden system prompt: the board exposes them and the included agent guidance tells compatible agents
+to honor them without expanding the task's authority or scope.
+
+![A task with two execution skills selected](docs/screenshots/task-skills.png)
+
+### Recurring tasks
+
+Enable **Recurring task** when work should produce another occurrence. Once that task is
+**Completed** and archived—manually or by the archive sweep—the server creates one successor in
+**Backlog**. The successor keeps the title, project, category, severity, risk, tags, skills, summary,
+scope, and recurring flag. It receives fresh created/updated dates and resets completion/archive
+state, status detail, attachments, and graph relationships (`depends_on`, `blocks`, `relates_to`,
+`parent`, and `children`).
+
+The generated task stores an internal `recurrence_of` lineage id. That makes repeat or concurrent
+archive calls idempotent: they return the existing successor instead of cloning again.
+
+![A generated recurring successor in Backlog](docs/screenshots/recurring-task.png)
 
 ### Create and document a project
 
@@ -238,7 +285,45 @@ native `graphify_query` / `graphify_affected` / `graphify_explain` / `graphify_p
 - **Filters:** the filter bar toggles by status, category, severity, and a created/updated/completed
   date range. **Clear** resets them.
 - **Views:** **Board** (Kanban), **Backlog** (parked work), **Table** (sortable), **Graph**
-  (dependency map), **Archive**, **Stats**, and **Connect** (MCP setup).
+  (dependency map), **Code map**, **Projects**, **Archive**, **Stats**, and **Connect** (MCP setup).
+
+### Configure the local workspace
+
+Open **Settings** from the gear beside **Export**. Settings writes `board.config.json`, so one local
+site can match a focused workflow without changing private task files.
+
+- Show Backlog on the Kanban board, hide any other status column, and set the Completed-card limit.
+- Hide or restore Backlog, Table, Graph, Code map, Projects, Archive, Stats, and Connect navigation
+  tabs. Hidden routes remain reachable by direct URL, so a view cannot be accidentally destroyed.
+- Create, edit, recolor, relabel, reorder, or remove statuses, categories, skills, severities, and
+  risks. `Backlog` and `Completed` ids are protected because recurrence and completion behavior rely
+  on them; their labels and colors remain editable.
+
+Changing a vocabulary id does not rewrite existing task files. Rename deliberately or update the
+affected tasks afterward. Because `board.config.json` is the repository's shareable template,
+settings changes appear in Git if this application repository is version-controlled.
+
+![Workspace settings for board columns and navigation](docs/screenshots/workspace-settings.png)
+
+![Editable status, category, skill, severity, and risk vocabularies](docs/screenshots/workspace-vocabulary.png)
+
+![A board configured to include the Backlog column](docs/screenshots/configurable-board.png)
+
+### Navigate the task graph
+
+The **Graph** uses the same status chips shown above other task views. Additional graph controls let
+you hide independent tasks and reset the current focus.
+
+- **Click** a node to focus it. The graph keeps that task, its recursive `depends_on` work, and its
+  parent chain, while unrelated dependents, blockers, and `relates_to` neighbors stay out.
+- **Clear focus** to restore the filtered graph.
+- **Double-click** a node to open its task drawer without changing focus first.
+- Use **Hide independent** to remove nodes with no task relationships at all.
+
+Status, project, orphan visibility, and focus live in the URL, making a narrowed graph reloadable
+and shareable on the same machine. If no task matches, **Reset graph filters** restores the view.
+
+![Focused task graph showing one task, its dependencies, and parent](docs/screenshots/graph-focus.png)
 
 ### Export to Markdown
 
@@ -281,7 +366,7 @@ board/_meta/           overview / relationships / import report            [git-
 exports/               generated Markdown exports                          [git-ignored — private]
 projects.json          your project list ({id,label}) — add via the UI     [git-ignored — private]
 project-docs/<project>/ agent instructions + imported README snapshots      [git-ignored — private]
-board.config.json      the vocabulary (statuses, categories, colors) — tracked template
+board.config.json      vocabulary, skills, board columns, and navigation — tracked template
 app/shared/            zod contract + shared TypeScript types (server + web)
 app/server/            Fastify + TypeScript API, file watcher, MCP server, importer
 app/web/               React + Vite + TypeScript frontend
@@ -297,6 +382,9 @@ AiDailyTasks is also an **MCP server**, so an agent gets structured tools for ta
 attachment upload/read/delete, archive/restore, project metadata and documentation, and graphs.
 Project-context tools include `get_project`, `add_project`, `update_project`,
 `get_project_documentation`, `update_project_documentation`, and `import_project_readme`.
+`get_config` / `update_config` expose the same vocabulary and visibility settings as the Settings
+page. Task reads include tags, execution skills, recurrence state, and successor lineage; archiving a
+completed recurring task reports the successor id in the tool result.
 
 It also exposes the **Code map** to agents: `generate_code_graph`, `get_code_graph` (status +
 overview), and `query_code_graph` (a file or symbol's dependencies/dependents, filtered by relation —
@@ -304,6 +392,12 @@ e.g. the call graph). When a project uses the graphify engine, graphify's own co
 too: `graphify_query` (natural-language question over the knowledge graph), `graphify_affected`
 (blast radius), `graphify_explain`, and `graphify_path`. So an agent can ask *"what calls this?"* or
 *"how does auth work?"* and get an answer from the graph instead of re-reading the repo.
+
+On the first eligible `get_task` read in each MCP session, a task whose project has a **ready,
+currently configured Graphify index** includes a `project_study_hint`. It recommends
+`graphify_query` for a quick architecture study, but it never starts indexing, refreshes the graph,
+or runs a query automatically. Later task reads for that project stay compact; a new MCP session can
+surface the advisory again.
 
 Because it's built on the open [Model Context Protocol](https://modelcontextprotocol.io) **and** on
 plain files, it isn't tied to any one assistant: MCP-capable agents (Claude, and other MCP clients)
