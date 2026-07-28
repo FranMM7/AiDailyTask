@@ -132,6 +132,20 @@ export function registerRoutes(app: FastifyInstance, services: Services): void {
     }
   });
 
+  // Delete a project. Refused (422) while any task — archived included — still uses it,
+  // so tasks never point at a project the picker no longer offers.
+  app.delete("/api/projects/:id", async (req, reply) => {
+    try {
+      const id = decodeURIComponent((req.params as { id: string }).id);
+      const inUse = (await services.tasks.list({ project: id, archived: "include", sort: "id", order: "asc" }))
+        .length;
+      const projects = await services.projects.remove(id, inUse);
+      reply.send({ projects });
+    } catch (err) {
+      sendError(reply, err);
+    }
+  });
+
   app.get("/api/projects/:id/documentation", async (req, reply) => {
     try {
       const id = decodeURIComponent((req.params as { id: string }).id);

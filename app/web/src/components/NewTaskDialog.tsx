@@ -84,6 +84,7 @@ export function NewTaskDialog({
       parent: null,
       summary: summary.trim(),
       scope: "",
+      qa: "",
     };
     create.mutate(body, {
       onSuccess: ({ task }) => {

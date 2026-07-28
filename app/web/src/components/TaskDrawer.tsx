@@ -1,10 +1,34 @@
-import { useEffect, useRef, useState, type ClipboardEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ClipboardEvent,
+  type Dispatch,
+  type ReactNode,
+  type RefObject,
+  type SetStateAction,
+} from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { X, Upload, Trash2, FileText, Send, AlertTriangle, ImagePlus, Loader2, ExternalLink } from "lucide-react";
+import {
+  X,
+  Upload,
+  Trash2,
+  FileText,
+  Send,
+  AlertTriangle,
+  ImagePlus,
+  Loader2,
+  ExternalLink,
+  ClipboardCheck,
+  Paperclip,
+  ListTree,
+  Pencil,
+} from "lucide-react";
 import type { Attachment, Observation, TaskDetail } from "@AiDailyTasks/shared";
 import {
   useAddObservation,
   useDeleteAttachment,
+  usePatchTask,
   useTask,
   useUploadAttachments,
 } from "@/api/hooks";
@@ -41,24 +65,16 @@ function fmtWhen(iso: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
 }
 
-function ObservationsSection({ task }: { task: TaskDetail }) {
-  const addObs = useAddObservation();
+/**
+ * Textarea helpers shared by the Observations composer and the QA editor: insert markdown
+ * at the caret, and paste a screenshot (or any image) to upload it as an attachment AND
+ * embed it inline — the image is kept on the task, so the context isn't lost once the
+ * clipboard is cleared.
+ */
+function useMarkdownComposer(taskId: string, taRef: RefObject<HTMLTextAreaElement>, setText: Dispatch<SetStateAction<string>>) {
   const upload = useUploadAttachments();
-  const [text, setText] = useState("");
   const [pasting, setPasting] = useState(false);
-  const taRef = useRef<HTMLTextAreaElement>(null);
 
-  const submit = () => {
-    const value = text.trim();
-    if (!value) return;
-    addObs.mutate(
-      { id: task.id, body: { baseRev: task.rev, author: "human", text: value } },
-      { onSuccess: () => setText("") },
-    );
-  };
-
-  // Insert markdown at the caret (append when the caret is unknown), leaving the
-  // caret just after the inserted text so the user can keep typing.
   const insertAtCaret = (snippet: string) => {
     const ta = taRef.current;
     setText((prev) => {
@@ -75,9 +91,6 @@ function ObservationsSection({ task }: { task: TaskDetail }) {
     });
   };
 
-  // Paste a screenshot (or any image) to upload it as an attachment AND embed it
-  // inline in the note. The image is then kept on the task and reviewable any time,
-  // so the context isn't lost once the clipboard is cleared.
   const handlePaste = async (e: ClipboardEvent<HTMLTextAreaElement>) => {
     const imageItems = Array.from(e.clipboardData?.items ?? []).filter(
       (it) => it.kind === "file" && it.type.startsWith("image/"),
@@ -101,7 +114,7 @@ function ObservationsSection({ task }: { task: TaskDetail }) {
 
     setPasting(true);
     try {
-      const { attachments } = await upload.mutateAsync({ id: task.id, files });
+      const { attachments } = await upload.mutateAsync({ id: taskId, files });
       insertAtCaret(attachments.map((a) => `![${a.name}](${a.url})`).join("\n"));
       toast(
         `Embedded ${attachments.length} image${attachments.length > 1 ? "s" : ""}`,
@@ -112,6 +125,24 @@ function ObservationsSection({ task }: { task: TaskDetail }) {
     } finally {
       setPasting(false);
     }
+  };
+
+  return { handlePaste, pasting };
+}
+
+function ObservationsSection({ task }: { task: TaskDetail }) {
+  const addObs = useAddObservation();
+  const [text, setText] = useState("");
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const { handlePaste, pasting } = useMarkdownComposer(task.id, taRef, setText);
+
+  const submit = () => {
+    const value = text.trim();
+    if (!value) return;
+    addObs.mutate(
+      { id: task.id, body: { baseRev: task.rev, author: "human", text: value } },
+      { onSuccess: () => setText("") },
+    );
   };
 
   return (
@@ -249,17 +280,57 @@ function MarkdownAttachmentPreview({ attachment, onClose }: { attachment: Attach
   );
 }
 
-function AttachmentsSection({ task }: { task: TaskDetail }) {
+/**
+ * Drag-and-drop / click-to-upload zone. `compact` renders the small always-visible
+ * variant that sits under Save & Archive in the metadata panel, so uploading never
+ * requires scrolling past a long conversation.
+ */
+export function UploadDropzone({ taskId, compact = false }: { taskId: string; compact?: boolean }) {
   const upload = useUploadAttachments();
-  const del = useDeleteAttachment();
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
-  const [preview, setPreview] = useState<Attachment | null>(null);
 
   const doUpload = (files: FileList | null) => {
     if (!files || files.length === 0) return;
-    upload.mutate({ id: task.id, files: Array.from(files) });
+    upload.mutate({ id: taskId, files: Array.from(files) });
   };
+
+  return (
+    <div
+      onDragOver={(e) => {
+        e.preventDefault();
+        setDragOver(true);
+      }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setDragOver(false);
+        doUpload(e.dataTransfer.files);
+      }}
+      onClick={() => inputRef.current?.click()}
+      className={`flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed text-xs text-slate-500 transition ${
+        compact ? "mt-3 p-2.5" : "mt-2 p-4"
+      } ${dragOver ? "border-blue-500 bg-blue-500/10" : "border-slate-300 dark:border-slate-700"}`}
+    >
+      <Upload size={compact ? 14 : 18} />
+      <span>{upload.isPending ? "Uploading…" : "Drop files or click to upload"}</span>
+      <input
+        ref={inputRef}
+        type="file"
+        multiple
+        className="hidden"
+        onChange={(e) => {
+          doUpload(e.target.files);
+          e.target.value = "";
+        }}
+      />
+    </div>
+  );
+}
+
+function AttachmentsSection({ task }: { task: TaskDetail }) {
+  const del = useDeleteAttachment();
+  const [preview, setPreview] = useState<Attachment | null>(null);
 
   return (
     <section>
@@ -321,43 +392,156 @@ function AttachmentsSection({ task }: { task: TaskDetail }) {
         </div>
       )}
 
+      {task.attachments.length === 0 && (
+        <p className="text-xs text-slate-500">No attachments yet.</p>
+      )}
+
       {preview ? <MarkdownAttachmentPreview attachment={preview} onClose={() => setPreview(null)} /> : null}
 
-      <div
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragOver(true);
-        }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDragOver(false);
-          doUpload(e.dataTransfer.files);
-        }}
-        onClick={() => inputRef.current?.click()}
-        className={`mt-2 flex cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed p-4 text-xs text-slate-500 transition ${
-          dragOver ? "border-blue-500 bg-blue-500/10" : "border-slate-300 dark:border-slate-700"
-        }`}
-      >
-        <Upload size={18} />
-        <span>{upload.isPending ? "Uploading…" : "Drop files or click to upload"}</span>
-        <input
-          ref={inputRef}
-          type="file"
-          multiple
-          className="hidden"
-          onChange={(e) => {
-            doUpload(e.target.files);
-            e.target.value = "";
-          }}
-        />
-      </div>
+      <UploadDropzone taskId={task.id} />
     </section>
+  );
+}
+
+/**
+ * The "## QA" section: how to test this task — manual steps, expected results, screenshots.
+ * Not every task needs one, so the empty state says exactly that; editing supports markdown
+ * with the same paste-a-screenshot-to-embed behavior as the Observations composer.
+ */
+function QaSection({ task }: { task: TaskDetail }) {
+  const patch = usePatchTask();
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(task.qaMarkdown);
+  const taRef = useRef<HTMLTextAreaElement>(null);
+  const { handlePaste, pasting } = useMarkdownComposer(task.id, taRef, setText);
+
+  // Re-sync the draft when the task changes on disk while not editing.
+  useEffect(() => {
+    if (!editing) setText(task.qaMarkdown);
+  }, [task.rev, task.id, editing, task.qaMarkdown]);
+
+  const save = () => {
+    patch.mutate(
+      { id: task.id, body: { baseRev: task.rev, body: { qa: text } } },
+      {
+        onSuccess: () => {
+          setEditing(false);
+          toast("QA notes saved", "success");
+        },
+      },
+    );
+  };
+
+  return (
+    <section>
+      <div className="mb-2 flex items-center justify-between">
+        <h3 className="text-sm font-semibold">QA — how to test</h3>
+        {!editing && (
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            <Pencil size={12} />
+            {task.qaMarkdown.trim() ? "Edit" : "Write QA steps"}
+          </button>
+        )}
+      </div>
+
+      {editing ? (
+        <div>
+          <textarea
+            ref={taRef}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onPaste={handlePaste}
+            placeholder={"1. Open …\n2. Do …\n3. Expect …\n\nMarkdown supported; paste a screenshot to embed it."}
+            rows={10}
+            className="w-full rounded-md border border-slate-300 bg-transparent p-2 text-sm outline-none focus:border-blue-500 dark:border-slate-700"
+          />
+          <div className="mt-1 flex items-center justify-between">
+            <span className="inline-flex items-center gap-1 text-xs text-slate-400">
+              {pasting ? (
+                <>
+                  <Loader2 size={12} className="animate-spin" />
+                  Uploading image…
+                </>
+              ) : (
+                <>
+                  <ImagePlus size={12} />
+                  Paste a screenshot to attach &amp; embed it
+                </>
+              )}
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setText(task.qaMarkdown);
+                  setEditing(false);
+                }}
+                className="rounded-md px-3 py-1.5 text-sm text-slate-500 hover:text-slate-900 dark:hover:text-white"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={save}
+                disabled={patch.isPending || pasting}
+                className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {patch.isPending ? "Saving…" : "Save QA notes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : task.qaMarkdown.trim() ? (
+        <MarkdownView markdown={task.qaMarkdown} />
+      ) : (
+        <p className="text-xs text-slate-500">
+          No QA steps documented. Not every task needs QA — when this one does, write the manual
+          test steps here (markdown; screenshots can be pasted right in).
+        </p>
+      )}
+    </section>
+  );
+}
+
+type DrawerTab = "details" | "attachments" | "qa";
+
+function TabButton({
+  active,
+  onClick,
+  icon,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: ReactNode;
+  label: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex items-center gap-1.5 border-b-2 px-3 py-2 text-sm font-medium transition ${
+        active
+          ? "border-blue-600 text-blue-600 dark:text-blue-400"
+          : "border-transparent text-slate-500 hover:text-slate-900 dark:hover:text-slate-100"
+      }`}
+    >
+      {icon}
+      {label}
+    </button>
   );
 }
 
 function DrawerBody({ id }: { id: string }) {
   const { data, isLoading, isError } = useTask(id);
+  const [tab, setTab] = useState<DrawerTab>("details");
+
+  // A different task always opens on its Details tab.
+  useEffect(() => setTab("details"), [id]);
 
   if (isLoading)
     return <div className="p-8 text-center text-sm text-slate-500">Loading {id}…</div>;
@@ -391,27 +575,55 @@ function DrawerBody({ id }: { id: string }) {
 
   return (
     <div className="grid gap-6 p-5 lg:grid-cols-[minmax(0,1fr)_320px]">
-      <div className="min-w-0 space-y-6 lg:order-1 lg:col-start-1">
-        {task.summaryMarkdown && (
-          <section>
-            <h3 className="mb-2 text-sm font-semibold">Summary</h3>
-            <MarkdownView markdown={task.summaryMarkdown} />
-          </section>
+      <div className="min-w-0 lg:order-1 lg:col-start-1">
+        <div className="mb-4 flex items-center border-b border-slate-200 dark:border-slate-800">
+          <TabButton
+            active={tab === "details"}
+            onClick={() => setTab("details")}
+            icon={<ListTree size={14} />}
+            label="Details"
+          />
+          <TabButton
+            active={tab === "attachments"}
+            onClick={() => setTab("attachments")}
+            icon={<Paperclip size={14} />}
+            label={`Attachments (${task.attachments.length})`}
+          />
+          <TabButton
+            active={tab === "qa"}
+            onClick={() => setTab("qa")}
+            icon={<ClipboardCheck size={14} />}
+            label={task.qaMarkdown.trim() ? "QA ✓" : "QA"}
+          />
+        </div>
+
+        {tab === "details" && (
+          <div className="space-y-6">
+            {task.summaryMarkdown && (
+              <section>
+                <h3 className="mb-2 text-sm font-semibold">Summary</h3>
+                <MarkdownView markdown={task.summaryMarkdown} />
+              </section>
+            )}
+            <section>
+              <h3 className="mb-2 text-sm font-semibold">Scope</h3>
+              {task.scopeMarkdown ? (
+                <MarkdownView markdown={task.scopeMarkdown} />
+              ) : (
+                <p className="text-xs text-slate-500">No scope written.</p>
+              )}
+            </section>
+            <ObservationsSection task={task} />
+          </div>
         )}
-        <section>
-          <h3 className="mb-2 text-sm font-semibold">Scope</h3>
-          {task.scopeMarkdown ? (
-            <MarkdownView markdown={task.scopeMarkdown} />
-          ) : (
-            <p className="text-xs text-slate-500">No scope written.</p>
-          )}
-        </section>
-        <ObservationsSection task={task} />
-        <AttachmentsSection task={task} />
+        {tab === "attachments" && <AttachmentsSection task={task} />}
+        {tab === "qa" && <QaSection task={task} />}
       </div>
 
       <aside className="lg:order-2 lg:col-start-2">
         <MetadataPanel task={task} />
+        {/* Always-reachable upload target: no scrolling past a long conversation to attach a file. */}
+        <UploadDropzone taskId={task.id} compact />
       </aside>
     </div>
   );

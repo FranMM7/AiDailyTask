@@ -59,7 +59,7 @@ export const MCP_TOOL_SUMMARY: { name: string; description: string }[] = [
   { name: "list_tasks", description: "List board tasks (summaries) with optional filters." },
   { name: "get_task", description: "Read one task in full; may include a ready-Graphify study hint." },
   { name: "create_task", description: "Create a task; the id is auto-assigned." },
-  { name: "update_task", description: "Patch a task's fields and/or summary/scope." },
+  { name: "update_task", description: "Patch a task's fields and/or summary/scope/QA notes." },
   { name: "delete_task", description: "Permanently delete an archived task after revision confirmation." },
   { name: "add_observation", description: "Append a timestamped note to a task's Observations log." },
   { name: "list_attachments", description: "List the files attached to a task (name, size, mime, url)." },
@@ -72,6 +72,7 @@ export const MCP_TOOL_SUMMARY: { name: string; description: string }[] = [
   { name: "get_project", description: "Read one project's metadata, documentation, and code-graph status." },
   { name: "add_project", description: "Add a project to the local projects.json (optional source root)." },
   { name: "update_project", description: "Edit a project's label and/or source root path." },
+  { name: "delete_project", description: "Delete a project from projects.json (refused while tasks still use it)." },
   { name: "get_project_documentation", description: "Get project details, agent instructions, and imported README." },
   { name: "update_project_documentation", description: "Save project-specific Markdown instructions for people and agents." },
   { name: "import_project_readme", description: "Copy a project's root README into its private documentation store." },
@@ -363,6 +364,7 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
         status_detail: z.string().optional(),
         summary: z.string().optional(),
         scope: z.string().optional(),
+        qa: z.string().optional().describe("How to test this task (markdown '## QA' section); most tasks omit it"),
         tags: z.array(z.string()).optional(),
         skills: z.array(z.string()).optional().describe("Agent execution expectations, e.g. Senior frontend engineer"),
         recurring: z.boolean().optional().describe("Create a new Backlog occurrence when completed and archived"),
@@ -385,7 +387,7 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
     {
       title: "Update task",
       description:
-        "Patch a task's fields and/or summary/scope. Pass baseRev for optimistic concurrency; if omitted, the current rev is used.",
+        "Patch a task's fields and/or summary/scope/qa. Pass baseRev for optimistic concurrency; if omitted, the current rev is used.",
       inputSchema: {
         id: z.string(),
         baseRev: z.number().optional(),
@@ -405,17 +407,21 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
         parent: z.string().nullable().optional(),
         summary: z.string().optional(),
         scope: z.string().optional(),
+        qa: z.string().optional().describe("How to test this task ('## QA' section); empty string clears it"),
       },
     },
     async (args) => {
-      const { id, baseRev, summary, scope, ...fields } = args;
+      const { id, baseRev, summary, scope, qa, ...fields } = args;
       const rev = await resolveRev(services, id, baseRev);
       if (rev === null) return fail(`Task ${id} not found or invalid.`);
       const editable = fields as EditableFields;
       const body: PatchRequest = {
         baseRev: rev,
         fields: Object.keys(editable).length > 0 ? editable : undefined,
-        body: summary !== undefined || scope !== undefined ? { summary, scope } : undefined,
+        body:
+          summary !== undefined || scope !== undefined || qa !== undefined
+            ? { summary, scope, qa }
+            : undefined,
       };
       const res = await services.tasks.patch(id, body);
       if (res.conflict) return fail(CONFLICT_MSG);
@@ -580,6 +586,33 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
         return ok({ projects });
       } catch (err) {
         return fail(`Cannot update project ${id}: ${(err as Error).message}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    "delete_project",
+    {
+      title: "Delete project",
+      description:
+        "Delete a project from the local projects.json. Refused while any task (archived included) is still " +
+        "assigned to it — reassign or delete those tasks first. Does not touch task files.",
+      inputSchema: {
+        id: z.string().min(1),
+      },
+    },
+    async ({ id }) => {
+      try {
+        const inUse = (await services.tasks.list({
+          project: id,
+          archived: "include",
+          sort: "id",
+          order: "asc",
+        })).length;
+        const projects = await services.projects.remove(id, inUse);
+        return ok({ projects });
+      } catch (err) {
+        return fail(`Cannot delete project ${id}: ${(err as Error).message}`);
       }
     },
   );

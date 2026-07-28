@@ -120,6 +120,28 @@ export class ProjectsService {
     return next;
   }
 
+  /**
+   * Delete a project from projects.json. `tasksUsingProject` is the caller-supplied count of
+   * board tasks (archived included) still assigned to the project — deletion is refused while
+   * any exist, so tasks never silently point at a project the picker no longer offers.
+   * Publishes config.updated. Returns the remaining list.
+   */
+  async remove(id: string, tasksUsingProject: number): Promise<ProjectDef[]> {
+    const current = this.list();
+    const idx = current.findIndex((p) => p.id === id);
+    if (idx === -1) throw new NotFoundError(`Project "${id}" not found`);
+    if (tasksUsingProject > 0) {
+      throw new ValidationError(
+        `Project "${id}" still has ${tasksUsingProject} task(s) (archived included). ` +
+          `Reassign or delete them first.`,
+      );
+    }
+    const next = current.filter((p) => p.id !== id);
+    await this.write(next);
+    this.bus.publish({ type: "config.updated" });
+    return next;
+  }
+
   private async write(projects: ProjectDef[]): Promise<void> {
     const contents = `${JSON.stringify(projects, null, 2)}\n`;
     const tmp = path.join(
