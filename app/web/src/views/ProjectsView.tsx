@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import { BookOpen, CheckCircle2, Folder, Loader2, Network, Save, Upload } from "lucide-react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { BookOpen, CheckCircle2, Folder, Loader2, Network, Save, Trash2, Upload } from "lucide-react";
 import type { CodeGraphIndexer, ProjectDef } from "@AiDailyTasks/shared";
 import {
-  useCodeGraph, useConfig, useGenerateCodeGraph, useImportProjectReadme,
-  useProjectDocumentation, useUpdateProject, useUpdateProjectDocumentation,
+  useCodeGraph, useConfig, useDeleteProject, useGenerateCodeGraph, useImportProjectReadme,
+  useProjectDocumentation, useTasks, useUpdateProject, useUpdateProjectDocumentation,
 } from "@/api/hooks";
 import { MarkdownView } from "@/components/MarkdownView";
 import { toast } from "@/store/toast";
@@ -46,19 +46,39 @@ function ProjectCard({ project }: { project: ProjectDef }) {
 }
 
 function ProjectDetails({ project }: { project: ProjectDef }) {
+  const navigate = useNavigate();
   const update = useUpdateProject();
+  const del = useDeleteProject();
   const generate = useGenerateCodeGraph();
   const saveDocs = useUpdateProjectDocumentation();
   const importReadme = useImportProjectReadme();
   const { data: docs, isLoading: docsLoading } = useProjectDocumentation(project.id);
   const { data: graph } = useCodeGraph(project.root ? project.id : undefined);
+  // Archived tasks included: the server refuses deletion while ANY task references the
+  // project, so the count shown here must match what the guard will check.
+  const { data: projectTasks } = useTasks({
+    project: project.id,
+    archived: "include",
+    sort: "id",
+    order: "asc",
+  });
+  const taskCount = projectTasks?.tasks.length;
   const [label, setLabel] = useState(project.label);
   const [root, setRoot] = useState(project.root ?? "");
   const [indexer, setIndexer] = useState<CodeGraphIndexer>(project.indexer ?? "builtin");
   const [instructions, setInstructions] = useState("");
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   useEffect(() => setInstructions(docs?.instructions ?? ""), [docs?.instructions]);
 
   const saveProject = () => update.mutate({ id: project.id, body: { label: label.trim() || project.label, root: root.trim(), indexer } }, { onSuccess: () => toast("Project details saved", "success") });
+  const removeProject = () =>
+    del.mutate(project.id, {
+      onSuccess: () => {
+        toast(`Deleted ${project.id}`, "success");
+        navigate("/projects");
+      },
+      onSettled: () => setConfirmingDelete(false),
+    });
   return (
     <div className="h-full overflow-y-auto p-5 sm:p-8">
       <div className="mx-auto max-w-6xl">
@@ -74,7 +94,29 @@ function ProjectDetails({ project }: { project: ProjectDef }) {
               {docs?.readme ? <div className="rounded-lg border border-slate-200 p-5 dark:border-slate-800"><MarkdownView markdown={docs.readme.markdown} /></div> : <p className="text-sm text-slate-400">Configure a source path, then import its root README.md.</p>}
             </Section>
           </main>
-          <aside><Section title="Project settings" description="Local source and indexing configuration."><div className="space-y-4"><Field label="Label"><input className={inputCls} value={label} onChange={(e) => setLabel(e.target.value)} /></Field><Field label="Source path"><input className={`${inputCls} font-mono text-xs`} value={root} onChange={(e) => setRoot(e.target.value)} /></Field><Field label="Code graph engine"><select className={inputCls} value={indexer} onChange={(e) => setIndexer(e.target.value as CodeGraphIndexer)}><option value="builtin">Built-in</option><option value="graphify">Graphify</option></select></Field><button onClick={saveProject} disabled={update.isPending} className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white dark:bg-slate-100 dark:text-slate-900"><Save size={14} />Save project</button><button onClick={() => generate.mutate(project.id)} disabled={!project.root || graph?.meta.status === "indexing"} className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm disabled:opacity-50 dark:border-slate-700"><Network size={14} />Generate code graph</button></div></Section></aside>
+          <aside className="space-y-6">
+            <Section title="Project settings" description="Local source and indexing configuration."><div className="space-y-4"><Field label="Label"><input className={inputCls} value={label} onChange={(e) => setLabel(e.target.value)} /></Field><Field label="Source path"><input className={`${inputCls} font-mono text-xs`} value={root} onChange={(e) => setRoot(e.target.value)} /></Field><Field label="Code graph engine"><select className={inputCls} value={indexer} onChange={(e) => setIndexer(e.target.value as CodeGraphIndexer)}><option value="builtin">Built-in</option><option value="graphify">Graphify</option></select></Field><button onClick={saveProject} disabled={update.isPending} className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-slate-900 px-3 py-2 text-sm font-medium text-white dark:bg-slate-100 dark:text-slate-900"><Save size={14} />Save project</button><button onClick={() => generate.mutate(project.id)} disabled={!project.root || graph?.meta.status === "indexing"} className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-slate-300 px-3 py-2 text-sm disabled:opacity-50 dark:border-slate-700"><Network size={14} />Generate code graph</button></div></Section>
+            <Section title="Danger zone" description="Removes the project from the picker and projects.json. Task files are never touched.">
+              {taskCount === undefined ? (
+                <Loader />
+              ) : taskCount > 0 ? (
+                <p className="text-xs text-slate-500">
+                  This project can&apos;t be deleted: <span className="font-semibold">{taskCount} task{taskCount === 1 ? "" : "s"}</span> still
+                  reference{taskCount === 1 ? "s" : ""} it (archived included). Reassign or delete those tasks first.
+                </p>
+              ) : confirmingDelete ? (
+                <div className="flex items-center justify-between gap-2 text-sm">
+                  <span className="text-slate-500">Delete {project.id}?</span>
+                  <span className="flex items-center gap-2">
+                    <button onClick={removeProject} disabled={del.isPending} className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-50">{del.isPending ? "Deleting…" : "Yes, delete"}</button>
+                    <button onClick={() => setConfirmingDelete(false)} className="text-sm text-slate-500 hover:text-slate-900 dark:hover:text-white">Cancel</button>
+                  </span>
+                </div>
+              ) : (
+                <button onClick={() => setConfirmingDelete(true)} className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-red-300 px-3 py-2 text-sm font-medium text-red-600 hover:bg-red-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950"><Trash2 size={14} />Delete project</button>
+              )}
+            </Section>
+          </aside>
         </div>
       </div>
     </div>
