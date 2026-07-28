@@ -1,8 +1,14 @@
 import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { X, Save, Network, Loader2, CheckCircle2, AlertTriangle } from "lucide-react";
+import { X, Save, Network, Loader2, CheckCircle2, AlertTriangle, Trash2 } from "lucide-react";
 import type { CodeGraphIndexer, ProjectDef } from "@AiDailyTasks/shared";
-import { useConfig, useUpdateProject, useCodeGraph, useGenerateCodeGraph } from "@/api/hooks";
+import {
+  useConfig,
+  useUpdateProject,
+  useDeleteProject,
+  useCodeGraph,
+  useGenerateCodeGraph,
+} from "@/api/hooks";
 import { toast } from "@/store/toast";
 
 const inputCls =
@@ -81,12 +87,21 @@ function StatusBadge({ project }: { project: ProjectDef }) {
 
 function ProjectRow({ project }: { project: ProjectDef }) {
   const update = useUpdateProject();
+  const del = useDeleteProject();
   const generate = useGenerateCodeGraph();
   const { data: graph } = useCodeGraph(project.root ? project.id : undefined);
 
   const [label, setLabel] = useState(project.label);
   const [root, setRoot] = useState(project.root ?? "");
   const [indexer, setIndexer] = useState<CodeGraphIndexer>(project.indexer ?? "builtin");
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+
+  const remove = () => {
+    del.mutate(project.id, {
+      onSuccess: () => toast(`Deleted ${project.id}`, "success"),
+      onSettled: () => setConfirmingDelete(false),
+    });
+  };
 
   const dirty =
     label.trim() !== project.label ||
@@ -170,6 +185,37 @@ function ProjectRow({ project }: { project: ProjectDef }) {
       </div>
 
       <div className="mt-3 flex items-center justify-end gap-2">
+        {/* Delete lives left of Save; the server refuses while tasks still use the project. */}
+        {confirmingDelete ? (
+          <span className="mr-auto inline-flex items-center gap-2 text-xs">
+            <span className="text-slate-500">Delete {project.id}?</span>
+            <button
+              type="button"
+              onClick={remove}
+              disabled={del.isPending}
+              className="rounded-md bg-red-600 px-2 py-1 font-medium text-white hover:bg-red-700 disabled:opacity-50"
+            >
+              {del.isPending ? "Deleting…" : "Yes, delete"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setConfirmingDelete(false)}
+              className="text-slate-500 hover:text-slate-900 dark:hover:text-white"
+            >
+              Cancel
+            </button>
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setConfirmingDelete(true)}
+            className="mr-auto inline-flex items-center gap-1.5 rounded-md border border-red-300 px-2.5 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950"
+            title="Delete this project (only possible when no tasks use it)"
+          >
+            <Trash2 size={13} />
+            Delete
+          </button>
+        )}
         <button
           type="button"
           onClick={save}

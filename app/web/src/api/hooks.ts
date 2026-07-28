@@ -184,6 +184,21 @@ export function useUpdateProject() {
   });
 }
 
+export function useDeleteProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.deleteProject(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["config"] });
+    },
+    onError: (err) => {
+      const message =
+        err instanceof ApiRequestError ? err.message : "Couldn't delete the project.";
+      toast(message, "error");
+    },
+  });
+}
+
 export function useUpdateProjectDocumentation() {
   const qc = useQueryClient();
   return useMutation({

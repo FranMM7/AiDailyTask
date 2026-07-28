@@ -5,6 +5,7 @@ import {
   LEVELS,
   STATUSES,
   normalizeId,
+  orderedDefs,
   type Category,
   type EditableFields,
   type Level,
@@ -129,7 +130,9 @@ export function MetadataPanel({ task }: { task: TaskDetail }) {
 
   const dirty = JSON.stringify(form) !== JSON.stringify(initial);
 
-  const statuses = config?.statuses ?? STATUSES.map((id) => ({ id, label: id }));
+  const statuses = orderedDefs(
+    config?.statuses ?? STATUSES.map((id) => ({ id, label: id, color: "#64748b" })),
+  );
   const categories = config?.categories ?? CATEGORIES.map((id) => ({ id, label: id }));
   const levels = config?.severities ?? LEVELS.map((id) => ({ id, label: id }));
   const risks = config?.risks ?? LEVELS.map((id) => ({ id, label: id }));

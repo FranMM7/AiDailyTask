@@ -9,7 +9,7 @@ import {
   useDroppable,
   type DragEndEvent,
 } from "@dnd-kit/core";
-import type { Status, TaskSummary, TaskSummaryOrInvalid } from "@AiDailyTasks/shared";
+import { orderedDefs, type Status, type TaskSummary, type TaskSummaryOrInvalid } from "@AiDailyTasks/shared";
 import { useConfig, usePatchTask, useTasks } from "@/api/hooks";
 import { readFilter } from "@/lib/filters";
 import { TaskCard } from "@/components/TaskCard";
@@ -101,10 +101,9 @@ export function BoardView() {
   // the Kanban alongside any other configured, non-hidden status.
   const statusDefs = useMemo(() => {
     const hidden = new Set(config?.board?.hiddenColumns ?? []);
-    const defs = (config?.statuses ?? []).filter(
+    return orderedDefs(config?.statuses ?? []).filter(
       (s) => !hidden.has(s.id) && (s.id !== "Backlog" || config?.board?.showBacklogColumn),
     );
-    return [...defs].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
   }, [config]);
 
   const { byStatus, invalid } = useMemo(() => {

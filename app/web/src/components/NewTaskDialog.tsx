@@ -5,6 +5,7 @@ import {
   CATEGORIES,
   LEVELS,
   STATUSES,
+  orderedDefs,
   type Category,
   type CreateRequest,
   type Level,
@@ -36,9 +37,9 @@ export function NewTaskDialog({
   const categories = config?.categories ?? CATEGORIES.map((id) => ({ id, label: id }));
   const levels = config?.severities ?? LEVELS.map((id) => ({ id, label: id }));
   const risks = config?.risks ?? LEVELS.map((id) => ({ id, label: id }));
-  const statuses = (config?.statuses ?? STATUSES.map((id) => ({ id, label: id }))).filter(
-    (s) => s.id !== "Archived",
-  );
+  const statuses = orderedDefs(
+    config?.statuses ?? STATUSES.map((id) => ({ id, label: id, color: "#64748b" })),
+  ).filter((s) => s.id !== "Archived");
 
   const [title, setTitle] = useState("");
   const [project, setProject] = useState("");
@@ -84,6 +85,7 @@ export function NewTaskDialog({
       parent: null,
       summary: summary.trim(),
       scope: "",
+      qa: "",
     };
     create.mutate(body, {
       onSuccess: ({ task }) => {

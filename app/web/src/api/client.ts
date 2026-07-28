@@ -140,6 +140,12 @@ export function getProjectDocumentation(id: string): Promise<ProjectDocumentatio
   return request<ProjectDocumentation>(`/projects/${encodeURIComponent(id)}/documentation`);
 }
 
+export function deleteProject(id: string): Promise<{ projects: ProjectDef[] }> {
+  return request<{ projects: ProjectDef[] }>(`/projects/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+}
+
 export function updateProjectDocumentation(id: string, instructions: string): Promise<ProjectDocumentation> {
   return request<ProjectDocumentation>(`/projects/${encodeURIComponent(id)}/documentation`, {
     method: "PUT",

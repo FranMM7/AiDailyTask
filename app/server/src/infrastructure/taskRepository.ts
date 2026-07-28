@@ -280,6 +280,8 @@ export class FsTaskRepository {
         sections: [
           { heading: "Summary", content: req.summary.trim() },
           { heading: "Scope", content: req.scope.trim() },
+          // QA is written only when provided — most tasks never need the section.
+          ...(req.qa.trim() ? [{ heading: "QA", content: req.qa.trim() }] : []),
           { heading: "Observations", content: "" },
         ],
       };
@@ -365,6 +367,7 @@ export class FsTaskRepository {
       if (req.body) {
         if (req.body.summary !== undefined) body = setSection(body, "Summary", req.body.summary);
         if (req.body.scope !== undefined) body = setSection(body, "Scope", req.body.scope);
+        if (req.body.qa !== undefined) body = setSection(body, "QA", req.body.qa);
       }
       fm.updated = this.today();
 
@@ -503,6 +506,9 @@ export class FsTaskRepository {
         parent: null,
         summary: source.summaryMarkdown,
         scope: source.scopeMarkdown,
+        // How-to-test steps are content, not lifecycle state: the next occurrence is
+        // tested the same way, so they carry forward with summary/scope.
+        qa: source.qaMarkdown,
       },
       sourceId,
     );

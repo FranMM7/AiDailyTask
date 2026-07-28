@@ -251,6 +251,7 @@ export function toTaskDetail(args: {
     valid: true,
     summaryMarkdown: getSection(args.parsed, "Summary"),
     scopeMarkdown: getSection(args.parsed, "Scope"),
+    qaMarkdown: getSection(args.parsed, "QA"),
     observations: parseObservations(getSection(args.parsed, "Observations")),
     attachments: args.attachments,
     rawBody: args.rawBody,

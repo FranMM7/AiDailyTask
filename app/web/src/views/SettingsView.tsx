@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, Eye, EyeOff, Pencil, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
-import type { BoardConfig, EnumDef } from "@AiDailyTasks/shared";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Eye, EyeOff, Pencil, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
+import { orderedDefs, type BoardConfig, type EnumDef } from "@AiDailyTasks/shared";
 import { useConfig, useUpdateConfig } from "@/api/hooks";
 import { toast } from "@/store/toast";
 
@@ -21,7 +21,10 @@ function normalize(config: BoardConfig): BoardConfig {
   const withRank = (defs: EnumDef[]) => defs.map((item, index) => ({ ...item, rank: index + 1 }));
   return {
     ...config,
-    statuses: withOrder(config.statuses),
+    // Sort by the persisted `order` BEFORE re-stamping it from the index, so loading a
+    // config whose array order disagrees with its order values (e.g. hand-edited) adopts
+    // what the board actually shows instead of silently reshuffling the columns on save.
+    statuses: withOrder(orderedDefs(config.statuses)),
     categories: config.categories.map((item) => ({ ...item })),
     skills: config.skills.map((item) => ({
       ...item,
@@ -214,6 +217,20 @@ export function SettingsView() {
   const hiddenColumns = new Set(draft.board?.hiddenColumns ?? []);
   const patch = (next: Partial<BoardConfig>) => setDraft((current) => (current ? { ...current, ...next } : current));
 
+  // Move a column one slot up/down. Backlog stays pinned first (it has its own view and a
+  // dedicated visibility toggle); `order` is re-stamped immediately so the board preview,
+  // this list, and the Statuses editor all agree before and after Save.
+  const moveColumn = (id: string, dir: -1 | 1) => {
+    const ordered = orderedDefs(draft.statuses);
+    const visible = ordered.filter((s) => s.id !== "Backlog");
+    const idx = visible.findIndex((s) => s.id === id);
+    const target = idx + dir;
+    if (idx === -1 || target < 0 || target >= visible.length) return;
+    [visible[idx], visible[target]] = [visible[target], visible[idx]];
+    const backlog = ordered.filter((s) => s.id === "Backlog");
+    patch({ statuses: [...backlog, ...visible].map((s, i) => ({ ...s, order: i })) });
+  };
+
   const save = () => {
     update.mutate(normalize(draft), {
       onSuccess: (saved) => {
@@ -244,16 +261,35 @@ export function SettingsView() {
         </header>
 
         <div className="grid gap-4 lg:grid-cols-2">
-          <Section title="Board columns" description="Choose which configured statuses appear on the Kanban board. Backlog also has its own dedicated view.">
+          <Section title="Board columns" description="Choose which configured statuses appear on the Kanban board and in what order — the board renders columns exactly as listed here. Backlog also has its own dedicated view.">
             <label className="mb-3 flex items-center gap-2 text-sm">
               <input type="checkbox" checked={draft.board?.showBacklogColumn ?? false} onChange={(event) => patch({ board: { ...draft.board, showBacklogColumn: event.target.checked } })} />
               Show Backlog as a board column
             </label>
             <div className="space-y-1.5">
-              {draft.statuses.filter((status) => status.id !== "Backlog").map((status) => {
-                const visible = !hiddenColumns.has(status.id);
-                return <button key={status.id} type="button" onClick={() => { const next = new Set(hiddenColumns); visible ? next.add(status.id) : next.delete(status.id); patch({ board: { ...draft.board, hiddenColumns: [...next] } }); }} className="flex w-full items-center justify-between rounded-md border border-slate-200 px-2.5 py-2 text-sm hover:bg-slate-50 dark:border-slate-800 dark:hover:bg-slate-900"><span className="flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: status.color }} />{status.label ?? status.id}</span>{visible ? <Eye size={15} /> : <EyeOff size={15} className="text-slate-400" />}</button>;
-              })}
+              {(() => {
+                const columns = orderedDefs(draft.statuses).filter((status) => status.id !== "Backlog");
+                return columns.map((status, index) => {
+                  const visible = !hiddenColumns.has(status.id);
+                  return (
+                    <div key={status.id} className="flex w-full items-center gap-1 rounded-md border border-slate-200 px-2.5 py-1.5 text-sm dark:border-slate-800">
+                      <span className="flex min-w-0 flex-1 items-center gap-2">
+                        <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: status.color }} />
+                        <span className="truncate">{status.label ?? status.id}</span>
+                      </span>
+                      <button type="button" aria-label={`Move ${status.id} up`} title="Move up" disabled={index === 0} onClick={() => moveColumn(status.id, -1)} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-25 dark:hover:bg-slate-800 dark:hover:text-slate-100">
+                        <ArrowUp size={14} />
+                      </button>
+                      <button type="button" aria-label={`Move ${status.id} down`} title="Move down" disabled={index === columns.length - 1} onClick={() => moveColumn(status.id, 1)} className="rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-25 dark:hover:bg-slate-800 dark:hover:text-slate-100">
+                        <ArrowDown size={14} />
+                      </button>
+                      <button type="button" aria-label={`${visible ? "Hide" : "Show"} ${status.id}`} title={visible ? "Hide from the board" : "Show on the board"} onClick={() => { const next = new Set(hiddenColumns); visible ? next.add(status.id) : next.delete(status.id); patch({ board: { ...draft.board, hiddenColumns: [...next] } }); }} className="rounded p-1 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800">
+                        {visible ? <Eye size={15} /> : <EyeOff size={15} className="text-slate-400" />}
+                      </button>
+                    </div>
+                  );
+                });
+              })()}
             </div>
             <label className="mt-3 block text-sm">Completed card limit<input type="number" min={1} max={500} value={draft.board?.completedColumnLimit ?? 10} onChange={(event) => patch({ board: { ...draft.board, completedColumnLimit: Number(event.target.value) || 10 } })} className="ml-3 w-20 rounded-md border border-slate-300 bg-transparent px-2 py-1 dark:border-slate-700" /></label>
           </Section>

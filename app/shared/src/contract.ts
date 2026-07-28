@@ -133,6 +133,8 @@ export interface TaskDetail extends Frontmatter {
   valid: true;
   summaryMarkdown: string;
   scopeMarkdown: string;
+  /** "## QA" body section: how to test this task (manual steps, screenshots). Empty when the task has no QA notes. */
+  qaMarkdown: string;
   observations: Observation[];
   attachments: Attachment[];
   rawBody: string;
@@ -160,6 +162,8 @@ export const PatchRequestSchema = z.object({
     .object({
       summary: z.string().optional(),
       scope: z.string().optional(),
+      /** "## QA" section: how to test this task. Empty string clears the section's content. */
+      qa: z.string().optional(),
     })
     .optional(),
 });
@@ -184,6 +188,7 @@ export const CreateRequestSchema = z.object({
   parent: z.string().nullable().default(null),
   summary: z.string().default(""),
   scope: z.string().default(""),
+  qa: z.string().default(""),
 });
 export type CreateRequest = z.infer<typeof CreateRequestSchema>;
 
@@ -428,6 +433,19 @@ export interface EnumDef {
   color: string;
   order?: number;
   rank?: number;
+}
+
+/**
+ * An EnumDef list in its configured display order: the persisted `order` wins, array
+ * position breaks ties and fills gaps. Every consumer (board columns, filter chips,
+ * status dropdowns, settings) sorts through this one helper so a hand-edited config
+ * and a UI-saved one can never disagree about column order.
+ */
+export function orderedDefs<T extends EnumDef>(defs: T[]): T[] {
+  return defs
+    .map((def, index) => ({ def, key: def.order ?? index, index }))
+    .sort((a, b) => a.key - b.key || a.index - b.index)
+    .map((entry) => entry.def);
 }
 export interface BoardConfig {
   idPrefix: string;
