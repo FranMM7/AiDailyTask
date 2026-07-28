@@ -1,12 +1,13 @@
 import { useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { X, Download, FileText } from "lucide-react";
-import type {
-  Category,
-  ExportRequest,
-  ExportResult,
-  Level,
-  Status,
+import {
+  orderedDefs,
+  type Category,
+  type ExportRequest,
+  type ExportResult,
+  type Level,
+  type Status,
 } from "@AiDailyTasks/shared";
 import { useConfig, useExport, useExports } from "@/api/hooks";
 import { toast } from "@/store/toast";
@@ -114,7 +115,7 @@ export function ExportDialog({
               <legend className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
                 Statuses
               </legend>
-              {config?.statuses.map((s) => (
+              {orderedDefs(config?.statuses ?? []).map((s) => (
                 <CheckRow
                   key={s.id}
                   label={s.label ?? s.id}

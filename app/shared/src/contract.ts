@@ -434,6 +434,19 @@ export interface EnumDef {
   order?: number;
   rank?: number;
 }
+
+/**
+ * An EnumDef list in its configured display order: the persisted `order` wins, array
+ * position breaks ties and fills gaps. Every consumer (board columns, filter chips,
+ * status dropdowns, settings) sorts through this one helper so a hand-edited config
+ * and a UI-saved one can never disagree about column order.
+ */
+export function orderedDefs<T extends EnumDef>(defs: T[]): T[] {
+  return defs
+    .map((def, index) => ({ def, key: def.order ?? index, index }))
+    .sort((a, b) => a.key - b.key || a.index - b.index)
+    .map((entry) => entry.def);
+}
 export interface BoardConfig {
   idPrefix: string;
   idPad: number;
