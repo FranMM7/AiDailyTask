@@ -403,9 +403,11 @@ too: `graphify_query` (natural-language question over the knowledge graph), `gra
 
 On the first eligible `get_task` read in each MCP session, a task whose project has a **ready,
 currently configured Graphify index** includes a `project_study_hint`. It recommends
-`graphify_query` for a quick architecture study, but it never starts indexing, refreshes the graph,
-or runs a query automatically. Later task reads for that project stay compact; a new MCP session can
-surface the advisory again.
+`query_code_graph` for a precise file or symbol question; use Graphify's `explain`, `path`, or
+`affected` commands only once you have an exact node label. Broad `graphify_query` architecture
+questions can produce noisy, truncated traversals. The hint never starts indexing, refreshes the
+graph, or runs a query automatically. Later task reads for that project stay compact; a new MCP
+session can surface the advisory again.
 
 Because it's built on the open [Model Context Protocol](https://modelcontextprotocol.io) **and** on
 plain files, it isn't tied to any one assistant: MCP-capable agents (Claude, and other MCP clients)

@@ -57,7 +57,7 @@ function fail(message: string): ToolResult {
 /** Names + one-liners for the registered tools — surfaced by GET /api/mcp-info for the Connect page. */
 export const MCP_TOOL_SUMMARY: { name: string; description: string }[] = [
   { name: "list_tasks", description: "List board tasks (summaries) with optional filters." },
-  { name: "get_task", description: "Read one task in full; may include a ready-Graphify study hint." },
+  { name: "get_task", description: "Read one task in full; may include a ready code-graph usage hint." },
   { name: "create_task", description: "Create a task; the id is auto-assigned." },
   { name: "update_task", description: "Patch a task's fields and/or summary/scope/QA notes." },
   { name: "delete_task", description: "Permanently delete an archived task after revision confirmation." },
@@ -162,19 +162,20 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
       let projectStudyHint: {
         label: string;
         project: string;
-        recommended_tool: "graphify_query";
+        recommended_tool: "query_code_graph";
         message: string;
       } | undefined;
       if (!graphifyHintsShown.has(hintKey) && (await services.codeGraph.hasReadyGraphify(t.project))) {
         graphifyHintsShown.add(hintKey);
         projectStudyHint = {
-          label: "Ready Graphify project context",
+          label: "Ready code graph",
           project: t.project,
-          recommended_tool: "graphify_query",
+          recommended_tool: "query_code_graph",
           message:
-            `A ready Graphify index is available for ${t.project}. Before substantial work, ` +
-            "consider graphify_query for a quick architecture study. This is advisory; no graph " +
-            "query or refresh has run.",
+            `A ready Graphify-backed code graph is available for ${t.project}. For a precise file or ` +
+            "symbol question, consider query_code_graph; use graphify_explain, graphify_path, or " +
+            "graphify_affected only when you already have an exact node label. Avoid broad " +
+            "graphify_query architecture questions. This is advisory; no graph query or refresh has run.",
         };
       }
 
@@ -939,9 +940,9 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
     {
       title: "Graphify: query",
       description:
-        "Ask a natural-language question about the codebase; graphify does a token-budgeted BFS over its " +
-        "knowledge graph and returns the relevant subgraph/answer. Far cheaper than reading files. " +
-        "Requires the project's indexer to be 'graphify' and a graph to have been generated.",
+        "Run Graphify's token-budgeted BFS over a narrowly phrased question with distinctive symbol names. " +
+        "Broad architecture questions can return noisy, truncated traversals; prefer query_code_graph for " +
+        "precise file/symbol lookup. Requires the project's indexer to be 'graphify' and a graph to have been generated.",
       inputSchema: {
         project: z.string().describe("Project id, e.g. my-app"),
         question: z.string().min(1).describe("e.g. 'how does authentication work?'"),
