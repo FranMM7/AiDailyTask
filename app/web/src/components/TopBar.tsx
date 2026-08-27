@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, useSearchParams } from "react-router-dom";
 import {
   LayoutGrid,
@@ -17,6 +17,7 @@ import {
   FolderCog,
   Moon,
   Sun,
+  BookOpen,
 } from "lucide-react";
 import { useConfig } from "@/api/hooks";
 import { useUiStore } from "@/store/ui";
@@ -28,6 +29,7 @@ const NAV = [
   { to: "/", label: "Board", icon: LayoutGrid, end: true },
   { to: "/backlog", label: "Backlog", icon: Inbox, end: false },
   { to: "/table", label: "Table", icon: Table2, end: false },
+  { to: "/resources", label: "Resources", icon: BookOpen, end: false },
   { to: "/graph", label: "Graph", icon: Share2, end: false },
   { to: "/code-graph", label: "Code map", icon: Waypoints, end: false },
   { to: "/projects", label: "Projects", icon: FolderCog, end: false },
@@ -60,6 +62,8 @@ export function TopBar() {
   const [exportOpen, setExportOpen] = useState(false);
   const [newTaskOpen, setNewTaskOpen] = useState(false);
   const [addProjectOpen, setAddProjectOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchInput = useRef<HTMLInputElement>(null);
 
   // debounced search box synced to ?q
   const [q, setQ] = useState(params.get("q") ?? "");
@@ -79,6 +83,9 @@ export function TopBar() {
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
+  useEffect(() => {
+    if (searchOpen) requestAnimationFrame(() => searchInput.current?.focus());
+  }, [searchOpen]);
 
   const project = params.get("project") ?? "All";
   const onProject = (value: string) => {
@@ -115,7 +122,23 @@ export function TopBar() {
       </nav>
 
       <div className="ml-auto flex flex-wrap items-center gap-2">
-        <label className="relative">
+        <div className={`relative flex items-center overflow-hidden transition-[width] duration-200 ease-out ${searchOpen ? "w-48 sm:w-56" : "w-8"}`}>
+          <button type="button" onClick={() => setSearchOpen((open) => !open)} title="Search tasks" aria-label="Search tasks" aria-expanded={searchOpen} className="absolute left-0 z-10 rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-100">
+            <Search size={15} />
+          </button>
+          <input
+            ref={searchInput}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onBlur={() => { if (!q) setSearchOpen(false); }}
+            onKeyDown={(e) => { if (e.key === "Escape") { setSearchOpen(false); searchInput.current?.blur(); } }}
+            placeholder="Search tasks…"
+            tabIndex={searchOpen ? 0 : -1}
+            className={`h-8 w-full rounded-md border border-slate-300 bg-transparent py-1.5 pl-8 pr-2 text-sm outline-none transition-opacity focus:border-blue-500 dark:border-slate-700 ${searchOpen ? "opacity-100" : "pointer-events-none opacity-0"}`}
+          />
+        </div>
+        {/* Search is intentionally collapsed by default so the board toolbar has room for actions. */}
+        {false && <label className="relative">
           <Search
             size={14}
             className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-slate-400"
@@ -126,7 +149,7 @@ export function TopBar() {
             placeholder="Search…"
             className="w-40 rounded-md border border-slate-300 bg-transparent py-1.5 pl-7 pr-2 text-sm outline-none focus:border-blue-500 dark:border-slate-700 sm:w-56"
           />
-        </label>
+        </label>}
 
         <button
           type="button"

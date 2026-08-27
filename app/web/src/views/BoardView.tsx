@@ -1,5 +1,6 @@
-import { useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import {
   DndContext,
   PointerSensor,
@@ -16,6 +17,17 @@ import { TaskCard } from "@/components/TaskCard";
 
 // Fallback cap for the Completed column when board.completedColumnLimit is unset.
 const DEFAULT_COMPLETED_LIMIT = 10;
+const COLLAPSED_COLUMNS_STORAGE_KEY = "aidailytasks.board.collapsed-columns";
+
+function readCollapsedColumns(): Set<string> {
+  try {
+    const stored = window.localStorage.getItem(COLLAPSED_COLUMNS_STORAGE_KEY);
+    const parsed: unknown = stored ? JSON.parse(stored) : [];
+    return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
 
 function DraggableCard({ task }: { task: TaskSummaryOrInvalid }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
@@ -42,6 +54,8 @@ function Column({
   tasks,
   count,
   footer,
+  collapsed,
+  onToggleCollapsed,
 }: {
   status: string;
   color: string;
@@ -49,26 +63,70 @@ function Column({
   /** Total in this bucket; defaults to tasks.length. Differs when the column is capped. */
   count?: number;
   footer?: ReactNode;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: status });
+  const taskCount = count ?? tasks.length;
   return (
-    <div className="flex w-72 shrink-0 flex-col">
-      <div className="mb-2 flex items-center gap-2 px-1">
+    <div
+      ref={setNodeRef}
+      className={`flex shrink-0 overflow-hidden transition-[width] duration-200 ease-out motion-reduce:transition-none ${
+        collapsed ? "w-12" : "w-72"
+      }`}
+    >
+      {collapsed ? (
+        <div
+          className={`flex w-full flex-col items-center rounded-lg py-2 transition-colors ${
+            isOver ? "bg-blue-500/10 ring-2 ring-blue-500/40" : "bg-slate-200/40 dark:bg-slate-900/40"
+          }`}
+        >
+        <button
+          type="button"
+          onClick={onToggleCollapsed}
+          className="rounded-md p-1.5 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+          aria-label={`Expand ${status} column`}
+          title={`Expand ${status}`}
+        >
+          <ChevronRight className="h-4 w-4" aria-hidden="true" />
+        </button>
+        <span className="mt-3 h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
+        <span
+          className="mt-2 text-sm font-semibold"
+          style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}
+        >
+          {status}
+        </span>
+        <span className="mt-2 text-xs text-slate-400">{taskCount}</span>
+        </div>
+      ) : (
+        <div className="flex h-full w-full min-w-0 min-h-0 flex-col">
+          <div className="mb-2 flex items-center gap-2 px-1">
         <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
         <span className="text-sm font-semibold">{status}</span>
-        <span className="text-xs text-slate-400">{count ?? tasks.length}</span>
-      </div>
-      <div
-        ref={setNodeRef}
-        className={`flex min-h-24 flex-1 flex-col gap-2 rounded-lg p-2 transition ${
-          isOver ? "bg-blue-500/10 ring-2 ring-blue-500/40" : "bg-slate-200/40 dark:bg-slate-900/40"
-        }`}
-      >
-        {tasks.map((t) => (
-          <DraggableCard key={t.id} task={t} />
-        ))}
-        {footer}
-      </div>
+        <span className="text-xs text-slate-400">{taskCount}</span>
+        <button
+          type="button"
+          onClick={onToggleCollapsed}
+          className="ml-auto rounded-md p-1 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:hover:bg-slate-800 dark:hover:text-slate-100"
+          aria-label={`Collapse ${status} column`}
+          title={`Collapse ${status}`}
+        >
+          <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+        </button>
+          </div>
+          <div
+            className={`flex min-h-24 flex-1 flex-col gap-2 overflow-y-auto rounded-lg p-2 transition-colors ${
+              isOver ? "bg-blue-500/10 ring-2 ring-blue-500/40" : "bg-slate-200/40 dark:bg-slate-900/40"
+            }`}
+          >
+            {tasks.map((t) => (
+              <DraggableCard key={t.id} task={t} />
+            ))}
+            {footer}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -90,6 +148,14 @@ export function BoardView() {
   const { data: config } = useConfig();
   const { data, isLoading, isError } = useTasks(filter);
   const patch = usePatchTask();
+  const [collapsedColumns, setCollapsedColumns] = useState<Set<string>>(readCollapsedColumns);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      COLLAPSED_COLUMNS_STORAGE_KEY,
+      JSON.stringify([...collapsedColumns]),
+    );
+  }, [collapsedColumns]);
 
   const completedLimit = config?.board?.completedColumnLimit ?? DEFAULT_COMPLETED_LIMIT;
 
@@ -142,6 +208,15 @@ export function BoardView() {
     });
   };
 
+  const toggleColumn = (status: string) => {
+    setCollapsedColumns((current) => {
+      const next = new Set(current);
+      if (next.has(status)) next.delete(status);
+      else next.add(status);
+      return next;
+    });
+  };
+
   if (isLoading) return <ViewMessage>Loading board…</ViewMessage>;
   if (isError) return <ViewMessage>Failed to load tasks.</ViewMessage>;
 
@@ -154,7 +229,16 @@ export function BoardView() {
           {statusDefs.map((s) => {
             const all = byStatus.get(s.id) ?? [];
             if (s.id !== "Completed") {
-              return <Column key={s.id} status={s.id} color={s.color} tasks={all} />;
+              return (
+                <Column
+                  key={s.id}
+                  status={s.id}
+                  color={s.color}
+                  tasks={all}
+                  collapsed={collapsedColumns.has(s.id)}
+                  onToggleCollapsed={() => toggleColumn(s.id)}
+                />
+              );
             }
             const shown = all.slice(0, completedLimit);
             const hidden = all.length - shown.length;
@@ -165,6 +249,8 @@ export function BoardView() {
                 color={s.color}
                 tasks={shown}
                 count={all.length}
+                collapsed={collapsedColumns.has(s.id)}
+                onToggleCollapsed={() => toggleColumn(s.id)}
                 footer={
                   hidden > 0 ? (
                     <Link
