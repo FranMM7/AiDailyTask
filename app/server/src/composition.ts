@@ -16,7 +16,9 @@ import {
   AttachmentService,
   GraphService,
   ExportService,
+  LibraryResourceService,
 } from "./application/services";
+import { LibraryResourceStore } from "./infrastructure/libraryResourceStore";
 import { CodeGraphService } from "./application/codeGraphService";
 import { ProjectDocumentationService } from "./application/projectDocumentationService";
 import type { Services } from "./interface/http/routes";
@@ -28,6 +30,8 @@ export interface Core {
   projects: ProjectsService;
   recentWrites: RecentWrites;
   attachmentStore: AttachmentStore;
+  resourceStore: AttachmentStore;
+  libraryStore: LibraryResourceStore;
   repo: FsTaskRepository;
   services: Services;
 }
@@ -42,7 +46,9 @@ export async function buildCore(env: Env, bus: EventBus): Promise<Core> {
   const config = new ConfigService(env);
   const recentWrites = new RecentWrites();
   const attachmentStore = new AttachmentStore(env);
-  const repo = new FsTaskRepository(env, config, attachmentStore, bus, recentWrites);
+  const resourceStore = new AttachmentStore(env, "resources", "resources/files");
+  const libraryStore = new LibraryResourceStore(env);
+  const repo = new FsTaskRepository(env, config, attachmentStore, resourceStore, bus, recentWrites);
   const projects = new ProjectsService(env, bus);
   await projects.ensureFile();
 
@@ -51,11 +57,13 @@ export async function buildCore(env: Env, bus: EventBus): Promise<Core> {
     projects,
     tasks: new TaskService(repo),
     attachments: new AttachmentService(attachmentStore, repo, bus),
+    resources: new AttachmentService(resourceStore, repo, bus),
+    library: new LibraryResourceService(libraryStore),
     graph: new GraphService(repo),
     codeGraph: new CodeGraphService(env, projects, bus),
     projectDocumentation: new ProjectDocumentationService(env, projects),
     exports: new ExportService(env, repo),
   };
 
-  return { config, projects, recentWrites, attachmentStore, repo, services };
+  return { config, projects, recentWrites, attachmentStore, resourceStore, libraryStore, repo, services };
 }

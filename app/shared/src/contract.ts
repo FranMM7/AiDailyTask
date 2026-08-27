@@ -43,6 +43,49 @@ export const STATUS_ORDER: Record<Status, number> = {
 
 export const ID_PATTERN = /^C\d+$/;
 
+export const RESOURCE_KINDS = ["instruction", "query", "script", "file"] as const;
+export const TaskResourceSchema = z
+  .object({
+    id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/),
+    title: z.string().trim().min(1).max(200),
+    kind: z.enum(RESOURCE_KINDS),
+    order: z.number().int().nonnegative(),
+    language: z.string().trim().max(50).optional(),
+    content: z.string().max(1_000_000).optional(),
+    fileName: z.string().trim().min(1).max(255).optional(),
+  })
+  .superRefine((resource, ctx) => {
+    if (resource.kind === "file" && !resource.fileName) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["fileName"], message: "File resources require fileName" });
+    }
+    if (resource.kind !== "file" && resource.content === undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["content"], message: "Inline resources require content" });
+    }
+  });
+export type TaskResource = z.infer<typeof TaskResourceSchema>;
+
+/** A board-wide reusable resource. Its payload lives outside any task directory. */
+export const LibraryResourceSchema = z.object({
+  id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/),
+  title: z.string().trim().min(1).max(200),
+  kind: z.enum(RESOURCE_KINDS),
+  language: z.string().trim().max(50).optional(),
+  content: z.string().max(1_000_000).optional(),
+  fileName: z.string().trim().min(1).max(255).optional(),
+  purpose: z.string().trim().min(1).max(500),
+  tags: z.array(z.string().trim().min(1).max(50)).default([]),
+  created: z.string(),
+  updated: z.string(),
+}).superRefine((resource, ctx) => {
+  if (resource.kind === "file" && !resource.fileName) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["fileName"], message: "File resources require fileName" });
+  if (resource.kind !== "file" && resource.content === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["content"], message: "Inline resources require content" });
+});
+export type LibraryResource = z.infer<typeof LibraryResourceSchema>;
+export const CreateLibraryResourceSchema = z.object({
+  title: z.string().trim().min(1).max(200), kind: z.enum(RESOURCE_KINDS), language: z.string().trim().max(50).optional(), content: z.string().max(1_000_000).optional(), fileName: z.string().trim().min(1).max(255).optional(), purpose: z.string().trim().min(1).max(500), tags: z.array(z.string().trim().min(1).max(50)).default([]),
+}).superRefine((resource, ctx) => { if (resource.kind !== "file" && resource.content === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["content"], message: "Inline resources require content" }); });
+export type CreateLibraryResource = z.infer<typeof CreateLibraryResourceSchema>;
+
 // ── Frontmatter (persisted in each task.md) ─────────────────────────────────
 export const FrontmatterSchema = z.object({
   id: z.string().regex(ID_PATTERN),
@@ -73,6 +116,8 @@ export const FrontmatterSchema = z.object({
   parent: z.string().nullable().default(null),
   children: z.array(z.string()).default([]),
   sources: z.array(z.string()).default([]),
+  /** Ordered, reusable task references. Unlike attachments, these survive recurrence. */
+  resources: z.array(TaskResourceSchema).default([]),
 });
 export type Frontmatter = z.infer<typeof FrontmatterSchema>;
 
@@ -94,6 +139,7 @@ export const EditableFieldsSchema = FrontmatterSchema.pick({
   relates_to: true,
   parent: true,
   children: true,
+  resources: true,
 }).partial();
 export type EditableFields = z.infer<typeof EditableFieldsSchema>;
 
@@ -137,6 +183,8 @@ export interface TaskDetail extends Frontmatter {
   qaMarkdown: string;
   observations: Observation[];
   attachments: Attachment[];
+  /** Physical files referenced by resources of kind=file. */
+  resourceFiles: Attachment[];
   rawBody: string;
   updatedEffective: string;
 }
@@ -186,6 +234,7 @@ export const CreateRequestSchema = z.object({
   blocks: z.array(z.string()).default([]),
   relates_to: z.array(z.string()).default([]),
   parent: z.string().nullable().default(null),
+  resources: z.array(TaskResourceSchema).default([]),
   summary: z.string().default(""),
   scope: z.string().default(""),
   qa: z.string().default(""),

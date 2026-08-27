@@ -19,6 +19,7 @@ import type {
   TaskFilter,
   TaskSummaryOrInvalid,
   UpdateProjectRequest,
+  CreateLibraryResource,
   ProjectDocumentation,
 } from "@AiDailyTasks/shared";
 import * as api from "./client";
@@ -373,6 +374,27 @@ export function useDeleteAttachment() {
       void qc.invalidateQueries({ queryKey: ["task", id] });
       void qc.invalidateQueries({ queryKey: ["tasks"] });
     },
+  });
+}
+
+export function useLibraryResources() { return useQuery({ queryKey: ["library-resources"], queryFn: api.getLibraryResources }); }
+export function useCreateLibraryResource() { const qc = useQueryClient(); return useMutation({ mutationFn: api.createLibraryResource, onSuccess: () => void qc.invalidateQueries({ queryKey: ["library-resources"] }), onError: () => toast("Couldn't save resource.", "error") }); }
+export function useDeleteLibraryResource() { const qc = useQueryClient(); return useMutation({ mutationFn: api.deleteLibraryResource, onSuccess: () => void qc.invalidateQueries({ queryKey: ["library-resources"] }), onError: () => toast("Couldn't delete resource.", "error") }); }
+export function useUploadLibraryResourceFile() { const qc = useQueryClient(); return useMutation({ mutationFn: ({ id, file }: { id: string; file: File }) => api.uploadLibraryResourceFile(id, file), onSuccess: () => void qc.invalidateQueries({ queryKey: ["library-resources"] }), onError: () => toast("Couldn't upload the resource file.", "error") }); }
+
+export function useUploadResourceFiles() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, files }: { id: string; files: File[] }) => api.uploadResourceFiles(id, files),
+    onSuccess: (_data, { id }) => void qc.invalidateQueries({ queryKey: ["task", id] }),
+  });
+}
+
+export function useDeleteResourceFile() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) => api.deleteResourceFile(id, name),
+    onSuccess: (_data, { id }) => void qc.invalidateQueries({ queryKey: ["task", id] }),
   });
 }
 

@@ -21,6 +21,8 @@ import {
   STATUSES,
   CATEGORIES,
   idNum,
+  type CreateLibraryResource,
+  type LibraryResource,
 } from "@AiDailyTasks/shared";
 import { applyFilter } from "../domain/filter";
 import { buildGraph } from "../domain/graph";
@@ -28,6 +30,18 @@ import type { FsTaskRepository, MutationResult, DeleteResult } from "../infrastr
 import type { AttachmentStore } from "../infrastructure/attachmentStore";
 import type { EventBus } from "../infrastructure/eventBus";
 import type { Env } from "../env";
+import type { LibraryResourceStore } from "../infrastructure/libraryResourceStore";
+
+export class LibraryResourceService {
+  constructor(private readonly store: LibraryResourceStore) {}
+  list(): Promise<LibraryResource[]> { return this.store.list(); }
+  get(id: string): Promise<LibraryResource> { return this.store.get(id); }
+  create(input: CreateLibraryResource): Promise<LibraryResource> { return this.store.create(input); }
+  update(id: string, input: Partial<CreateLibraryResource>): Promise<LibraryResource> { return this.store.update(id, input); }
+  delete(id: string): Promise<void> { return this.store.delete(id); }
+  saveFile(id: string, name: string, data: Buffer): Promise<LibraryResource> { return this.store.saveFile(id, name, data); }
+  readFile(id: string) { return this.store.readFile(id); }
+}
 
 export class TaskService {
   private summariesInFlight: Promise<TaskSummaryOrInvalid[]> | null = null;

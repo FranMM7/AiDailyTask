@@ -23,6 +23,7 @@ import type {
   AttachmentService,
   GraphService,
   ExportService,
+  LibraryResourceService,
 } from "../../application/services";
 import type { CodeGraphService } from "../../application/codeGraphService";
 import type { ConfigService } from "../../config";
@@ -35,6 +36,8 @@ export interface Services {
   projects: ProjectsService;
   tasks: TaskService;
   attachments: AttachmentService;
+  resources: AttachmentService;
+  library: LibraryResourceService;
   graph: GraphService;
   codeGraph: CodeGraphService;
   projectDocumentation: ProjectDocumentationService;
@@ -81,6 +84,13 @@ const IdParam = z.object({ id: z.string().regex(ID_PATTERN) });
 const ArchiveBody = z.object({ baseRev: z.number().optional() });
 
 export function registerRoutes(app: FastifyInstance, services: Services): void {
+  app.get("/api/resources", async (_req, reply) => reply.send({ resources: await services.library.list() }));
+  app.get("/api/resources/:id", async (req, reply) => { try { reply.send({ resource: await services.library.get((req.params as { id: string }).id) }); } catch (err) { sendError(reply, err); } });
+  app.post("/api/resources", async (req, reply) => { try { reply.code(201).send({ resource: await services.library.create(req.body as never) }); } catch (err) { sendError(reply, err); } });
+  app.patch("/api/resources/:id", async (req, reply) => { try { reply.send({ resource: await services.library.update((req.params as { id: string }).id, req.body as never) }); } catch (err) { sendError(reply, err); } });
+  app.delete("/api/resources/:id", async (req, reply) => { try { await services.library.delete((req.params as { id: string }).id); reply.code(204).send(); } catch (err) { sendError(reply, err); } });
+  app.post("/api/resources/:id/file", async (req, reply) => { try { const part = await req.file(); if (!part) throw new ValidationError("Provide a file"); reply.send({ resource: await services.library.saveFile((req.params as { id: string }).id, part.filename, await part.toBuffer()) }); } catch (err) { sendError(reply, err); } });
+  app.get("/api/resources/:id/file", async (req, reply) => { try { const file = await services.library.readFile((req.params as { id: string }).id); reply.type(file.mime).send(await (await import("node:fs/promises")).readFile(file.path)); } catch (err) { sendError(reply, err); } });
   // ── Config ───────────────────────────────────────────────────────────────
   // Projects are merged in from the local projects.json (ProjectsService), not the
   // committed board.config.json.
@@ -430,6 +440,72 @@ export function registerRoutes(app: FastifyInstance, services: Services): void {
     } catch (err) {
       handleParamOrError(reply, err);
     }
+  });
+
+  // Resource files are durable runbook inputs, stored separately from occurrence attachments.
+  app.get("/api/tasks/:id/resources/files", async (req, reply) => {
+    try {
+      const { id } = IdParam.parse(req.params);
+      reply.send({ files: await services.resources.list(id) });
+    } catch (err) { handleParamOrError(reply, err); }
+  });
+
+  app.post("/api/tasks/:id/resources/files", async (req, reply) => {
+    try {
+      const { id } = IdParam.parse(req.params);
+      if (!req.isMultipart()) {
+        reply.code(400).send(errorEnvelope("validation_error", "Expected multipart/form-data"));
+        return;
+      }
+      const files: { filename: string; data: Buffer }[] = [];
+      for await (const part of req.files()) {
+        if (part.filename) files.push({ filename: part.filename, data: await part.toBuffer() });
+      }
+      if (files.length === 0) {
+        reply.code(400).send(errorEnvelope("validation_error", "No files uploaded (field name must be 'files')"));
+        return;
+      }
+      reply.send({ files: await services.resources.saveMany(id, files) });
+    } catch (err) { handleParamOrError(reply, err); }
+  });
+
+  app.get("/api/tasks/:id/resources/files/:name", async (req, reply) => {
+    try {
+      const { id } = IdParam.parse(req.params);
+      const name = decodeURIComponent((req.params as { name: string }).name);
+      const file = await services.resources.read(id, name);
+      reply.header("Content-Type", file.mime);
+      reply.header("Accept-Ranges", "bytes");
+      reply.header("Content-Disposition", `inline; filename="${name.replace(/"/g, "")}"`);
+      reply.header("Cache-Control", "no-cache");
+      const range = req.headers.range;
+      if (range) {
+        const match = /^bytes=(\d*)-(\d*)$/.exec(range.trim());
+        if (match) {
+          const total = file.size;
+          let start = match[1] ? Number(match[1]) : undefined;
+          let end = match[2] ? Number(match[2]) : undefined;
+          if (start === undefined && end !== undefined) { start = Math.max(0, total - end); end = total - 1; }
+          else { start ??= 0; end ??= total - 1; }
+          if (start > end || start >= total) { reply.header("Content-Range", `bytes */${total}`); reply.code(416).send(); return; }
+          reply.code(206);
+          reply.header("Content-Range", `bytes ${start}-${end}/${total}`);
+          reply.header("Content-Length", String(end - start + 1));
+          return reply.send(file.stream({ start, end }));
+        }
+      }
+      reply.header("Content-Length", String(file.size));
+      return reply.send(file.stream());
+    } catch (err) { handleParamOrError(reply, err); }
+  });
+
+  app.delete("/api/tasks/:id/resources/files/:name", async (req, reply) => {
+    try {
+      const { id } = IdParam.parse(req.params);
+      const name = decodeURIComponent((req.params as { name: string }).name);
+      await services.resources.delete(id, name);
+      reply.code(204).send();
+    } catch (err) { handleParamOrError(reply, err); }
   });
 
   // ── Export ───────────────────────────────────────────────────────────────────

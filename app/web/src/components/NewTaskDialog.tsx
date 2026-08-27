@@ -83,6 +83,7 @@ export function NewTaskDialog({
       blocks: [],
       relates_to: [],
       parent: null,
+      resources: [],
       summary: summary.trim(),
       scope: "",
       qa: "",

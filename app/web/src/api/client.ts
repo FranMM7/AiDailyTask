@@ -6,6 +6,7 @@ import type {
   ConflictResponse,
   CreateProjectRequest,
   CreateRequest,
+  CreateLibraryResource,
   ExportRequest,
   ExportResult,
   GraphData,
@@ -18,6 +19,7 @@ import type {
   TaskDetailOrInvalid,
   TaskFilter,
   TaskSummaryOrInvalid,
+  LibraryResource,
   UpdateProjectRequest,
 } from "@AiDailyTasks/shared";
 
@@ -249,6 +251,27 @@ export function deleteAttachment(id: string, name: string): Promise<void> {
     { method: "DELETE" },
   );
 }
+
+export function uploadResourceFiles(id: string, files: File[]): Promise<{ files: Attachment[] }> {
+  const form = new FormData();
+  for (const file of files) form.append("files", file, file.name);
+  return request<{ files: Attachment[] }>(`/tasks/${encodeURIComponent(id)}/resources/files`, {
+    method: "POST",
+    body: form,
+  });
+}
+
+export function deleteResourceFile(id: string, name: string): Promise<void> {
+  return request<void>(`/tasks/${encodeURIComponent(id)}/resources/files/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+}
+
+export function getLibraryResources(): Promise<{ resources: LibraryResource[] }> { return request("/resources"); }
+export function createLibraryResource(body: CreateLibraryResource): Promise<{ resource: LibraryResource }> { return request("/resources", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); }
+export function updateLibraryResource(id: string, body: Partial<CreateLibraryResource>): Promise<{ resource: LibraryResource }> { return request(`/resources/${encodeURIComponent(id)}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); }
+export function deleteLibraryResource(id: string): Promise<void> { return request(`/resources/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+export function uploadLibraryResourceFile(id: string, file: File): Promise<{ resource: LibraryResource }> { const form = new FormData(); form.append("file", file, file.name); return request(`/resources/${encodeURIComponent(id)}/file`, { method: "POST", body: form }); }
 
 /** Absolute API url for an attachment (matches Attachment.url shape). */
 export function attachmentUrl(id: string, name: string): string {

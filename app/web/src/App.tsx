@@ -16,6 +16,7 @@ import { StatsView } from "@/views/StatsView";
 import { McpConfigView } from "@/views/McpConfigView";
 import { ProjectsView } from "@/views/ProjectsView";
 import { SettingsView } from "@/views/SettingsView";
+import { ResourcesView } from "@/views/ResourcesView";
 
 function NotFound() {
   return (
@@ -54,6 +55,7 @@ export default function App() {
           <Route path="/" element={<BoardView />} />
           <Route path="/backlog" element={<BacklogView />} />
           <Route path="/table" element={<TableView />} />
+          <Route path="/resources" element={<ResourcesView />} />
           <Route path="/graph" element={<GraphView />} />
           <Route path="/code-graph" element={<CodeGraphView />} />
           <Route path="/archive" element={<ArchiveView />} />

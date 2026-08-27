@@ -18,6 +18,7 @@ import {
   type EditableFields,
   type PatchRequest,
   type TaskDetailOrInvalid,
+  TaskResourceSchema,
 } from "@AiDailyTasks/shared";
 import type { Services } from "../http/routes";
 
@@ -59,13 +60,16 @@ export const MCP_TOOL_SUMMARY: { name: string; description: string }[] = [
   { name: "list_tasks", description: "List board tasks (summaries) with optional filters." },
   { name: "get_task", description: "Read one task in full; may include a ready code-graph usage hint." },
   { name: "create_task", description: "Create a task; the id is auto-assigned." },
-  { name: "update_task", description: "Patch a task's fields and/or summary/scope/QA notes." },
+  { name: "update_task", description: "Patch a task's fields, reusable resources, and/or summary/scope/QA notes." },
   { name: "delete_task", description: "Permanently delete an archived task after revision confirmation." },
   { name: "add_observation", description: "Append a timestamped note to a task's Observations log." },
   { name: "list_attachments", description: "List the files attached to a task (name, size, mime, url)." },
   { name: "get_attachment", description: "Fetch one of a task's attachments by filename (image/text/base64)." },
   { name: "upload_attachment", description: "Upload a text or base64 file to a task." },
   { name: "delete_attachment", description: "Permanently delete one attachment from a task." },
+  { name: "upload_resource_file", description: "Upload a durable file used by a task resource." },
+  { name: "get_resource_file", description: "Fetch a durable task-resource file." },
+  { name: "delete_resource_file", description: "Delete a durable task-resource file." },
   { name: "archive_task", description: "Archive a task; completed recurring work creates one successor." },
   { name: "unarchive_task", description: "Restore an archived task." },
   { name: "list_projects", description: "List configured projects (id, label, source root)." },
@@ -150,8 +154,8 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
     {
       title: "Get task",
       description:
-        "Read one task in full: frontmatter, summary, scope, observations, attachments. " +
-        "The first eligible read in a session may include a non-blocking Graphify study hint.",
+        "Read one task in full: frontmatter, summary, scope, reusable resources, observations, and attachments. " +
+        "The first eligible read in a session may include a non-blocking code-graph usage hint.",
       inputSchema: { id: z.string().describe("Task id, e.g. C09") },
     },
     async ({ id }) => {
@@ -217,6 +221,8 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
         scope: t.scopeMarkdown,
         observations: t.observations,
         attachments: t.attachments.map((a) => ({ name: a.name, size: a.size, url: a.url })),
+        resources: t.resources,
+        resource_files: t.resourceFiles,
         ...(projectStudyHint ? { project_study_hint: projectStudyHint } : {}),
       });
     },
@@ -347,6 +353,56 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
     },
   );
 
+  server.registerTool(
+    "upload_resource_file",
+    {
+      title: "Upload resource file",
+      description: "Upload a durable reference file. Then add a kind=file resource with update_task.",
+      inputSchema: { id: z.string(), filename: z.string().min(1), text: z.string().optional(), base64: z.string().optional() },
+    },
+    async ({ id, filename, text, base64 }) => {
+      if ((text === undefined) === (base64 === undefined)) return fail("Provide exactly one of text or base64.");
+      const data = text !== undefined ? Buffer.from(text, "utf8") : Buffer.from(base64!, "base64");
+      if (data.byteLength > MAX_ATTACHMENT_BYTES) return fail(`Resource file is over the ${MAX_ATTACHMENT_BYTES}-byte MCP upload limit.`);
+      try {
+        const files = await services.resources.saveMany(id, [{ filename, data }]);
+        return ok({ id: normalizeId(id), file: files[0] });
+      } catch (err) { return fail(`Cannot upload resource file to ${id}: ${(err as Error).message}`); }
+    },
+  );
+
+  server.registerTool(
+    "get_resource_file",
+    {
+      title: "Get resource file",
+      description: "Fetch a durable task-resource file as text, image, or base64 content.",
+      inputSchema: { id: z.string(), name: z.string().min(1) },
+    },
+    async ({ id, name }) => {
+      try {
+        const file = await services.resources.read(id, name);
+        if (file.size > MAX_ATTACHMENT_BYTES) return fail(`Resource file is over the ${MAX_ATTACHMENT_BYTES}-byte inline limit.`);
+        const buffer = await collectStream(file.stream());
+        if (/^image\//.test(file.mime)) return { content: [{ type: "image", data: buffer.toString("base64"), mimeType: file.mime }] };
+        if (/^text\//.test(file.mime) || file.mime === "application/json") return { content: [{ type: "text", text: buffer.toString("utf8") }] };
+        return { content: [{ type: "resource", resource: { uri: `file:///${normalizeId(id)}/resources/${encodeURIComponent(name)}`, mimeType: file.mime, blob: buffer.toString("base64") } }] };
+      } catch (err) { return fail(`Resource file not found: ${name} (task ${id}) — ${(err as Error).message}`); }
+    },
+  );
+
+  server.registerTool(
+    "delete_resource_file",
+    {
+      title: "Delete resource file",
+      description: "Delete a resource file after removing its metadata reference with update_task.",
+      inputSchema: { id: z.string(), name: z.string().min(1), confirm: z.literal(true) },
+    },
+    async ({ id, name }) => {
+      try { await services.resources.delete(id, name); return ok({ id: normalizeId(id), deleted: name }); }
+      catch (err) { return fail(`Cannot delete resource file ${name} from ${id}: ${(err as Error).message}`); }
+    },
+  );
+
   // ── Write: tasks ─────────────────────────────────────────────────────────────
   server.registerTool(
     "create_task",
@@ -373,6 +429,7 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
         blocks: z.array(z.string()).optional(),
         relates_to: z.array(z.string()).optional(),
         parent: z.string().nullable().optional(),
+        resources: z.array(TaskResourceSchema).optional().describe("Ordered reusable instructions, queries, scripts, and file references"),
       },
     },
     async (args) => {
@@ -406,6 +463,7 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
         blocks: z.array(z.string()).optional(),
         relates_to: z.array(z.string()).optional(),
         parent: z.string().nullable().optional(),
+        resources: z.array(TaskResourceSchema).optional(),
         summary: z.string().optional(),
         scope: z.string().optional(),
         qa: z.string().optional().describe("How to test this task ('## QA' section); empty string clears it"),

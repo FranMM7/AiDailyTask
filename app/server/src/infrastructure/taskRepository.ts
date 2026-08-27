@@ -92,6 +92,7 @@ export class FsTaskRepository {
     private readonly env: Env,
     private readonly config: ConfigService,
     private readonly attachments: AttachmentStore,
+    private readonly resourceFiles: AttachmentStore,
     private readonly bus: EventBus,
     private readonly recentWrites: RecentWrites,
   ) {}
@@ -208,7 +209,8 @@ export class FsTaskRepository {
     }
     const fm = { ...parsed.frontmatter, id: normalizeId(id) };
     const attachments = await this.attachments.list(id);
-    return toTaskDetail({ fm, rev: st.mtimeMs, parsed: parsed.parsed, rawBody: parsed.body, attachments });
+    const resourceFiles = await this.resourceFiles.list(id);
+    return toTaskDetail({ fm, rev: st.mtimeMs, parsed: parsed.parsed, rawBody: parsed.body, attachments, resourceFiles });
   }
 
   /** Read requiring validity (used after our own writes). */
@@ -249,6 +251,7 @@ export class FsTaskRepository {
       const dir = this.taskDir(id);
       await fs.mkdir(dir, { recursive: true });
       await fs.mkdir(path.join(dir, "files"), { recursive: true });
+      await fs.mkdir(path.join(dir, "resources"), { recursive: true });
 
       const today = this.today();
       const fm: Frontmatter = {
@@ -274,6 +277,7 @@ export class FsTaskRepository {
         parent: req.parent,
         children: [],
         sources: [],
+        resources: req.resources,
       };
       const body: ParsedBody = {
         preamble: "",
@@ -488,7 +492,7 @@ export class FsTaskRepository {
       }
     }
 
-    return this.createWithLineage(
+    const successor = await this.createWithLineage(
       {
         title: source.title,
         project: source.project,
@@ -504,6 +508,7 @@ export class FsTaskRepository {
         blocks: [],
         relates_to: [],
         parent: null,
+        resources: source.resources.map((resource) => ({ ...resource })),
         summary: source.summaryMarkdown,
         scope: source.scopeMarkdown,
         // How-to-test steps are content, not lifecycle state: the next occurrence is
@@ -512,6 +517,14 @@ export class FsTaskRepository {
       },
       sourceId,
     );
+    const sourceResources = path.join(this.taskDir(sourceId), "resources");
+    const successorResources = path.join(this.taskDir(successor.id), "resources");
+    try {
+      await fs.cp(sourceResources, successorResources, { recursive: true, force: false });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+    return this.readDetailStrict(successor.id);
   }
 
   /** Permanently remove an archived task directory after an exact revision check. */
@@ -568,6 +581,7 @@ export class FsTaskRepository {
       parent: detail.parent,
       children: detail.children,
       sources: detail.sources,
+      resources: detail.resources,
     };
     return toTaskSummary({
       fm,

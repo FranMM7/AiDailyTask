@@ -71,7 +71,8 @@ function parseArgs(argv: string[]): Args {
   let dryRun = false;
   let source =
     process.env.AiDailyTasks_AUDIT_SOURCE ??
-    process.env.AiDailyTaks_AUDIT_SOURCE ??
+    process.env.AiDailyTasks_AUDIT_SOURCE ??
+    process.env.AiDailyTaks_AUDIT_SOURCE ?? // legacy misspelling; keep for compatibility
     DEFAULT_SOURCE;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -270,6 +271,7 @@ async function main(): Promise<void> {
       parent: rel.parent.get(t.id) ?? null,
       children: rel.children.get(t.id) ?? [],
       sources: t.sources,
+      resources: [],
     };
     const body = buildBody({ summaryMd: t.summaryMd, scopeMd: t.scopeMd, migrationTs });
     const md = buildTaskMd(fm, body);

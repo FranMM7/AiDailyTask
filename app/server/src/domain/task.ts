@@ -156,6 +156,7 @@ const KEY_ORDER: readonly (keyof Frontmatter)[] = [
   "parent",
   "children",
   "sources",
+  "resources",
 ];
 
 const OPTIONAL_DATE_KEYS = new Set<keyof Frontmatter>(["created", "updated", "completed", "archived_at"]);
@@ -244,6 +245,7 @@ export function toTaskDetail(args: {
   parsed: ParsedBody;
   rawBody: string;
   attachments: Attachment[];
+  resourceFiles?: Attachment[];
 }): TaskDetail {
   return {
     ...args.fm,
@@ -254,6 +256,7 @@ export function toTaskDetail(args: {
     qaMarkdown: getSection(args.parsed, "QA"),
     observations: parseObservations(getSection(args.parsed, "Observations")),
     attachments: args.attachments,
+    resourceFiles: args.resourceFiles ?? [],
     rawBody: args.rawBody,
     updatedEffective: updatedEffective(args.fm.updated, args.rev),
   };
