@@ -23,6 +23,8 @@
     "share": "npm run share --workspace app/server --",
     "import": "npm run import --workspace app/server --",
     "import:dry": "npm run import --workspace app/server -- --dry-run",
+    "migrate:structured": "tsx app/server/src/tools/migrate-structured-tasks.ts",
+    "bench:store": "tsx app/server/src/tools/bench-task-store.ts",
     "typecheck": "npm run typecheck --workspaces --if-present"
   },
   "devDependencies": {

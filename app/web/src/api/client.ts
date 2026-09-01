@@ -12,6 +12,7 @@ import type {
   GraphData,
   McpInfo,
   ObservationRequest,
+  ObservationPage,
   PatchRequest,
   ProjectDef,
   ProjectDocumentation,
@@ -250,6 +251,15 @@ export function deleteAttachment(id: string, name: string): Promise<void> {
     `/tasks/${encodeURIComponent(id)}/attachments/${encodeURIComponent(name)}`,
     { method: "DELETE" },
   );
+}
+
+export function getObservations(
+  id: string,
+  cursor: string,
+  limit = 20,
+): Promise<ObservationPage> {
+  const params = new URLSearchParams({ cursor, limit: String(limit) });
+  return request<ObservationPage>(`/tasks/${encodeURIComponent(id)}/observations?${params}`);
 }
 
 export function uploadResourceFiles(id: string, files: File[]): Promise<{ files: Attachment[] }> {

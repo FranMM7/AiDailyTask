@@ -82,6 +82,10 @@ function toArray(value: unknown): string[] | undefined {
 
 const IdParam = z.object({ id: z.string().regex(ID_PATTERN) });
 const ArchiveBody = z.object({ baseRev: z.number().optional() });
+const ObservationPageQuery = z.object({
+  cursor: z.string().regex(/^\d+$/).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+});
 
 export function registerRoutes(app: FastifyInstance, services: Services): void {
   app.get("/api/resources", async (_req, reply) => reply.send({ resources: await services.library.list() }));
@@ -238,7 +242,12 @@ export function registerRoutes(app: FastifyInstance, services: Services): void {
   app.get("/api/tasks/:id", async (req, reply) => {
     try {
       const { id } = IdParam.parse(req.params);
-      const task = await services.tasks.get(id);
+      const query = ObservationPageQuery.safeParse(req.query);
+      if (!query.success) {
+        reply.code(400).send(errorEnvelope("validation_error", "Invalid observation page", query.error.flatten()));
+        return;
+      }
+      const task = await services.tasks.get(id, query.data.limit);
       reply.send({ task });
     } catch (err) {
       handleParamOrError(reply, err);
@@ -437,6 +446,20 @@ export function registerRoutes(app: FastifyInstance, services: Services): void {
       const name = decodeURIComponent((req.params as { name: string }).name);
       await services.attachments.delete(id, name);
       reply.code(204).send();
+    } catch (err) {
+      handleParamOrError(reply, err);
+    }
+  });
+
+  app.get("/api/tasks/:id/observations", async (req, reply) => {
+    try {
+      const { id } = IdParam.parse(req.params);
+      const query = ObservationPageQuery.safeParse(req.query);
+      if (!query.success) {
+        reply.code(400).send(errorEnvelope("validation_error", "Invalid observation page", query.error.flatten()));
+        return;
+      }
+      reply.send(await services.tasks.listObservations(id, query.data.cursor, query.data.limit));
     } catch (err) {
       handleParamOrError(reply, err);
     }

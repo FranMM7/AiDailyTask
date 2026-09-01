@@ -58,7 +58,8 @@ function fail(message: string): ToolResult {
 /** Names + one-liners for the registered tools — surfaced by GET /api/mcp-info for the Connect page. */
 export const MCP_TOOL_SUMMARY: { name: string; description: string }[] = [
   { name: "list_tasks", description: "List board tasks (summaries) with optional filters." },
-  { name: "get_task", description: "Read one task in full; may include a ready code-graph usage hint." },
+  { name: "get_task", description: "Read one task with its latest observation page; may include a ready code-graph usage hint." },
+  { name: "list_observations", description: "Read a bounded page of a task's observation history." },
   { name: "create_task", description: "Create a task; the id is auto-assigned." },
   { name: "update_task", description: "Patch a task's fields, reusable resources, and/or summary/scope/QA notes." },
   { name: "delete_task", description: "Permanently delete an archived task after revision confirmation." },
@@ -154,12 +155,12 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
     {
       title: "Get task",
       description:
-        "Read one task in full: frontmatter, summary, scope, reusable resources, observations, and attachments. " +
+        "Read one task: frontmatter, summary, scope, reusable resources, the latest 20 observations, and attachments. " +
         "The first eligible read in a session may include a non-blocking code-graph usage hint.",
       inputSchema: { id: z.string().describe("Task id, e.g. C09") },
     },
     async ({ id }) => {
-      const t = await services.tasks.get(id);
+      const t = await services.tasks.get(id, 20);
       if (!t.valid) return fail(`Task ${id} is invalid: ${t.parseError}`);
 
       const hintKey = t.project;
@@ -220,11 +221,34 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
         summary: t.summaryMarkdown,
         scope: t.scopeMarkdown,
         observations: t.observations,
+        observation_count: t.observationCount,
+        next_observation_cursor: t.nextObservationCursor,
         attachments: t.attachments.map((a) => ({ name: a.name, size: a.size, url: a.url })),
         resources: t.resources,
         resource_files: t.resourceFiles,
         ...(projectStudyHint ? { project_study_hint: projectStudyHint } : {}),
       });
+    },
+  );
+
+  server.registerTool(
+    "list_observations",
+    {
+      title: "List observations",
+      description: "Read one bounded chronological page of a task's observations. Pass next_cursor from get_task or a prior page to retrieve older notes.",
+      inputSchema: {
+        id: z.string().describe("Task id, e.g. C09"),
+        cursor: z.string().optional().describe("Opaque cursor for older observations"),
+        limit: z.number().int().min(1).max(100).optional().describe("Page size; defaults to 20"),
+      },
+    },
+    async ({ id, cursor, limit }) => {
+      try {
+        const page = await services.tasks.listObservations(id, cursor, limit);
+        return ok({ id: normalizeId(id), ...page });
+      } catch (err) {
+        return fail(`Cannot read observations for ${id}: ${(err as Error).message}`);
+      }
     },
   );
 
@@ -1075,7 +1099,7 @@ async function resolveRev(
   if (baseRev !== undefined) return baseRev;
   let current: TaskDetailOrInvalid;
   try {
-    current = await services.tasks.get(id);
+    current = await services.tasks.get(id, 1);
   } catch {
     return null;
   }

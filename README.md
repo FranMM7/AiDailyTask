@@ -141,6 +141,47 @@ database.
   author, newest last, so a task carries its own history.
 - **Attach files:** drag files onto the drawer's upload area, or **paste a screenshot directly into an
   observation** — it's saved under `board/<ID>/files/` and embedded inline in the note.
+
+### Storage format and the structured migration
+
+A task is stored in one of two formats and the app reads both:
+
+```
+board/<ID>/task.json           frontmatter + body sections            (structured)
+board/<ID>/observations.jsonl  one observation per line, appended     (structured)
+board/<ID>/task.md             frontmatter + body + ## Observations   (legacy)
+```
+
+Set `AIDAILYTASKS_TASK_STORE` to choose:
+
+| Value | Meaning |
+| --- | --- |
+| `auto` (default) | Read each task in whichever format it is stored in, preferring `task.json`. New tasks are created as JSON once any task has been migrated. |
+| `json` | Structured only. |
+| `markdown` | Legacy only — the rollback switch. |
+
+Migrating is two separate runs, so nothing is deleted until you ask for it:
+
+```bash
+npm run migrate:structured -- status                     # what format is each task in?
+npm run migrate:structured -- convert --dry-run          # verify every task converts
+npm run migrate:structured -- convert                    # write the structured files
+npm run migrate:structured -- remove-markdown --dry-run  # what would be deleted, and why not
+npm run migrate:structured -- remove-markdown --yes      # delete the legacy task.md files
+```
+
+`convert` leaves `task.md` in place, so the board stays readable both ways and the migration can
+be abandoned by deleting the JSON. **Once a task has a `task.json` it is the source of truth and
+the leftover `task.md` is ignored** — do not keep editing it. `remove-markdown` re-checks every
+task and refuses to delete a `task.md` that holds an observation missing from
+`observations.jsonl`, reporting each one it kept and why.
+
+To convert into a separate directory for review instead of in place, pass
+`--output <dir>`; that never modifies `board/`.
+
+`npm run bench:store -- --board board --store json` times the board list, a task read, and an
+observation page against a real board, for comparing the formats on your own hardware.
+
 - **Archive / restore:** finished tasks auto-archive after a while (configurable in
   `board.config.json`), or archive one by hand from the drawer. The **Archive** view lists them and
   restores with one click.

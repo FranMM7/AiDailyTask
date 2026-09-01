@@ -152,6 +152,14 @@ export interface Observation {
   markdown: string;
 }
 
+/** A bounded chronological slice of a task's observation history. */
+export interface ObservationPage {
+  observations: Observation[];
+  /** Opaque cursor for the next (older) page; null once the full history is loaded. */
+  nextCursor: string | null;
+  total: number;
+}
+
 export interface Attachment {
   name: string;
   size: number;
@@ -181,7 +189,12 @@ export interface TaskDetail extends Frontmatter {
   scopeMarkdown: string;
   /** "## QA" body section: how to test this task (manual steps, screenshots). Empty when the task has no QA notes. */
   qaMarkdown: string;
+  /** Most recent page of observations, ordered oldest to newest within the page. */
   observations: Observation[];
+  /** Total observations across the complete history, not merely this response page. */
+  observationCount: number;
+  /** Cursor for fetching older observations, or null when this response includes all of them. */
+  nextObservationCursor: string | null;
   attachments: Attachment[];
   /** Physical files referenced by resources of kind=file. */
   resourceFiles: Attachment[];

@@ -24,6 +24,7 @@ import type {
 } from "@AiDailyTasks/shared";
 import * as api from "./client";
 import { ApiRequestError } from "./client";
+import { beginTaskWrite, endTaskWrite } from "@/events/pendingTaskWrites";
 import { toast } from "@/store/toast";
 
 export type TasksResponse = { tasks: TaskSummaryOrInvalid[] };
@@ -152,6 +153,21 @@ function invalidateTaskViews(qc: QueryClient, id: string): void {
   void qc.invalidateQueries({ queryKey: ["graph"] });
 }
 
+/** The rev this tab currently believes a task is at. */
+function currentRev(qc: QueryClient, id: string): number | undefined {
+  return qc.getQueryData<TaskResponse>(["task", id])?.task?.rev;
+}
+
+/**
+ * Close out a write and decide whether the echoes we swallowed while it ran were
+ * really ours. Anything at a different rev came from another writer (or another
+ * tab) and still needs to be picked up.
+ */
+function settleTaskWrite(qc: QueryClient, id: string): void {
+  const suppressed = endTaskWrite(id);
+  if (suppressed.some((rev) => rev !== currentRev(qc, id))) invalidateTaskViews(qc, id);
+}
+
 // ── Mutations ──────────────────────────────────────────────────────────────────
 
 export function useAddProject() {
@@ -254,6 +270,7 @@ export function usePatchTask() {
   return useMutation<{ task: TaskDetail }, unknown, PatchVars, PatchContext>({
     mutationFn: ({ id, body }) => api.patchTask(id, body),
     onMutate: async ({ id, body }) => {
+      beginTaskWrite(id);
       await qc.cancelQueries({ queryKey: ["tasks"] });
       await qc.cancelQueries({ queryKey: ["task", id] });
 
@@ -293,6 +310,7 @@ export function usePatchTask() {
       qc.setQueryData<TaskResponse>(["task", id], { task });
     },
     onSettled: (_data, _err, { id }) => {
+      endTaskWrite(id);
       invalidateTaskViews(qc, id);
     },
   });
@@ -303,9 +321,36 @@ export function useAddObservation() {
   return useMutation({
     mutationFn: ({ id, body }: { id: string; body: ObservationRequest }) =>
       api.addObservation(id, body),
+    // Registered before the request goes out so the server's SSE echo — which can
+    // beat the response back — is recognised as ours instead of triggering a
+    // full board refetch.
+    onMutate: ({ id }) => {
+      beginTaskWrite(id);
+    },
+    onSettled: (_data, _err, { id }) => {
+      settleTaskWrite(qc, id);
+    },
     onSuccess: ({ task }, { id }) => {
       qc.setQueryData<TaskResponse>(["task", id], { task });
-      void qc.invalidateQueries({ queryKey: ["tasks"] });
+      // The save response already has the current task. Updating its compact card
+      // in place avoids a full board scan after every appended note.
+      qc.setQueriesData<TasksResponse>({ queryKey: ["tasks"] }, (old) =>
+        old
+          ? {
+              tasks: old.tasks.map((entry) =>
+                entry.valid && entry.id === id
+                  ? {
+                      ...entry,
+                      rev: task.rev,
+                      updated: task.updated,
+                      updatedEffective: task.updatedEffective,
+                      observationCount: task.observationCount,
+                    }
+                  : entry,
+              ),
+            }
+          : old,
+      );
     },
     onError: (err, { id }) => {
       if (err instanceof ApiRequestError && err.conflict) {
@@ -320,6 +365,12 @@ export function useArchiveTask() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, baseRev }: { id: string; baseRev?: number }) => api.archiveTask(id, baseRev),
+    onMutate: ({ id }) => {
+      beginTaskWrite(id);
+    },
+    onSettled: (_data, _err, { id }) => {
+      endTaskWrite(id);
+    },
     onSuccess: ({ task, successor }, { id }) => {
       qc.setQueryData<TaskResponse>(["task", id], { task });
       invalidateTaskViews(qc, id);
@@ -338,6 +389,12 @@ export function useUnarchiveTask() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, baseRev }: { id: string; baseRev?: number }) => api.unarchiveTask(id, baseRev),
+    onMutate: ({ id }) => {
+      beginTaskWrite(id);
+    },
+    onSettled: (_data, _err, { id }) => {
+      endTaskWrite(id);
+    },
     onSuccess: ({ task }, { id }) => {
       qc.setQueryData<TaskResponse>(["task", id], { task });
       invalidateTaskViews(qc, id);
@@ -387,6 +444,28 @@ export function useUploadResourceFiles() {
   return useMutation({
     mutationFn: ({ id, files }: { id: string; files: File[] }) => api.uploadResourceFiles(id, files),
     onSuccess: (_data, { id }) => void qc.invalidateQueries({ queryKey: ["task", id] }),
+  });
+}
+
+/** Prepend one older page without replacing the drawer's currently-rendered notes. */
+export function useLoadOlderObservations() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, cursor }: { id: string; cursor: string }) => api.getObservations(id, cursor),
+    onSuccess: (page, { id }) => {
+      qc.setQueryData<TaskResponse>(["task", id], (old) => {
+        if (!old?.task.valid) return old;
+        return {
+          task: {
+            ...old.task,
+            observations: [...page.observations, ...old.task.observations],
+            observationCount: page.total,
+            nextObservationCursor: page.nextCursor,
+          },
+        };
+      });
+    },
+    onError: () => toast("Couldn't load older observations.", "error"),
   });
 }
 

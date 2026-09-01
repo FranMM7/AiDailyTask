@@ -34,6 +34,7 @@ import {
 import type { Attachment, Observation, TaskDetail, TaskResource } from "@AiDailyTasks/shared";
 import {
   useAddObservation,
+  useLoadOlderObservations,
   useDeleteAttachment,
   usePatchTask,
   useTask,
@@ -165,6 +166,7 @@ function useMarkdownComposer(taskId: string, taRef: RefObject<HTMLTextAreaElemen
 
 function ObservationsSection({ task }: { task: TaskDetail }) {
   const addObs = useAddObservation();
+  const loadOlder = useLoadOlderObservations();
   const [text, setText] = useState("");
   const taRef = useRef<HTMLTextAreaElement>(null);
   const { handlePaste, pasting } = useMarkdownComposer(task.id, taRef, setText);
@@ -180,9 +182,9 @@ function ObservationsSection({ task }: { task: TaskDetail }) {
 
   return (
     <section>
-      <h3 className="mb-2 text-sm font-semibold">Observations ({task.observations.length})</h3>
+      <h3 className="mb-2 text-sm font-semibold">Observations ({task.observationCount})</h3>
       <ol className="space-y-3">
-        {task.observations.map((o: Observation, i) => (
+        {[...task.observations].reverse().map((o: Observation, i) => (
           <li
             key={`${o.at}-${i}`}
             className="rounded-lg border border-slate-200 p-3 dark:border-slate-800"
@@ -194,10 +196,22 @@ function ObservationsSection({ task }: { task: TaskDetail }) {
             <MarkdownView markdown={o.markdown} />
           </li>
         ))}
-        {task.observations.length === 0 && (
+        {task.observationCount === 0 && (
           <li className="text-xs text-slate-500">No observations yet.</li>
         )}
       </ol>
+
+      {task.nextObservationCursor && (
+        <button
+          type="button"
+          onClick={() => loadOlder.mutate({ id: task.id, cursor: task.nextObservationCursor! })}
+          disabled={loadOlder.isPending}
+          className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+        >
+          {loadOlder.isPending && <Loader2 size={14} className="animate-spin" />}
+          {loadOlder.isPending ? "Loading…" : "Load earlier observations"}
+        </button>
+      )}
 
       <div className="mt-3">
         <textarea

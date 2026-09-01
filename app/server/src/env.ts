@@ -5,9 +5,12 @@
  * `board.config.json`. It can be overridden with the AiDailyTasks_ROOT env var;
  * otherwise it is resolved three levels up from this file
  * (app/server/src -> app/server -> app -> <root>).
+ *
+ * AIDAILYTASKS_TASK_STORE selects the on-disk task format. See TaskStoreMode.
  */
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { type TaskStoreMode, isTaskStoreMode } from "./infrastructure/taskFileStore";
 
 export interface Env {
   root: string;
@@ -22,6 +25,21 @@ export interface Env {
   webDistDir: string;
   port: number;
   host: string;
+  taskStore: TaskStoreMode;
+}
+
+/**
+ * Defaults to `auto`: read each task in whichever format it is stored in. An
+ * explicit `json` or `markdown` forces one format and is how a migration is
+ * committed to, or rolled back from.
+ */
+function resolveTaskStore(): TaskStoreMode {
+  const raw = (process.env.AIDAILYTASKS_TASK_STORE ?? "").trim().toLowerCase();
+  if (raw.length === 0) return "auto";
+  if (!isTaskStoreMode(raw)) {
+    throw new Error(`AIDAILYTASKS_TASK_STORE must be one of auto|markdown|json (got "${raw}")`);
+  }
+  return raw;
 }
 
 function resolveRoot(): string {
@@ -51,5 +69,6 @@ export function loadEnv(): Env {
     webDistDir: path.join(root, "app", "web", "dist"),
     port,
     host: "127.0.0.1",
+    taskStore: resolveTaskStore(),
   };
 }

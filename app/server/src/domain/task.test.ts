@@ -152,6 +152,7 @@ test("recurring successor retains resource files but not ordinary attachments", 
     webDistDir: path.join(root, "dist"),
     port: 0,
     host: "127.0.0.1",
+    taskStore: "auto",
   };
 
   try {

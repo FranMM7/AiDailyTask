@@ -34,6 +34,7 @@ async function fixture(): Promise<{ env: Env; cleanup: () => Promise<void> }> {
     webDistDir: path.join(root, "dist"),
     port: 4317,
     host: "127.0.0.1",
+    taskStore: "auto",
   };
   await writeFile(env.configTemplatePath, template, "utf8");
   return { env, cleanup: () => rm(root, { recursive: true, force: true }) };

@@ -17,6 +17,7 @@ import {
   type ExportRequest,
   type ExportResult,
   type TaskDetail,
+  type ObservationPage,
   type TaskSummary,
   STATUSES,
   CATEGORIES,
@@ -61,8 +62,12 @@ export class TaskService {
     return applyFilter(all, filter);
   }
 
-  get(id: string): Promise<TaskDetailOrInvalid> {
-    return this.repo.read(id);
+  get(id: string, observationLimit?: number): Promise<TaskDetailOrInvalid> {
+    return this.repo.read(id, observationLimit);
+  }
+
+  listObservations(id: string, cursor?: string, limit?: number): Promise<ObservationPage> {
+    return this.repo.listObservations(id, cursor, limit);
   }
 
   create(req: CreateRequest): Promise<TaskDetail> {

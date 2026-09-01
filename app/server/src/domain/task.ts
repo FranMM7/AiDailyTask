@@ -239,6 +239,52 @@ export function toTaskSummary(args: {
   };
 }
 
+/**
+ * Build the detail DTO from an already-resolved observation page.
+ *
+ * Observations are passed in rather than parsed out of the body so a structured
+ * task never has to materialize its history to answer a detail request; the
+ * Markdown path resolves its page first and calls the same builder.
+ */
+export function buildTaskDetail(args: {
+  fm: Frontmatter;
+  rev: number;
+  summaryMarkdown: string;
+  scopeMarkdown: string;
+  qaMarkdown: string;
+  /** The newest page (oldest-to-newest within the page), or the whole history. */
+  observations: Observation[];
+  /** Length of the complete history, not of the page above. */
+  observationCount: number;
+  attachments: Attachment[];
+  resourceFiles?: Attachment[];
+  rawBody: string;
+  paged: boolean;
+}): TaskDetail {
+  return {
+    ...args.fm,
+    rev: args.rev,
+    valid: true,
+    summaryMarkdown: args.summaryMarkdown,
+    scopeMarkdown: args.scopeMarkdown,
+    qaMarkdown: args.qaMarkdown,
+    observations: args.observations,
+    observationCount: args.observationCount,
+    nextObservationCursor:
+      args.paged && args.observationCount > args.observations.length
+        ? String(args.observationCount - args.observations.length)
+        : null,
+    attachments: args.attachments,
+    resourceFiles: args.resourceFiles ?? [],
+    // Valid task views consume the structured section fields above. Do not duplicate
+    // the complete Markdown body (and its full observation history) in paged API
+    // responses; rawBody is only needed for internal full reads / invalid diagnostics.
+    rawBody: args.paged ? "" : args.rawBody,
+    updatedEffective: updatedEffective(args.fm.updated, args.rev),
+  };
+}
+
+/** Markdown-shaped convenience wrapper: split the history out of the body first. */
 export function toTaskDetail(args: {
   fm: Frontmatter;
   rev: number;
@@ -246,18 +292,22 @@ export function toTaskDetail(args: {
   rawBody: string;
   attachments: Attachment[];
   resourceFiles?: Attachment[];
+  /** Omit to include the complete history (exports and internal callers). */
+  observationLimit?: number;
 }): TaskDetail {
-  return {
-    ...args.fm,
+  const all = parseObservations(getSection(args.parsed, "Observations"));
+  const limit = args.observationLimit;
+  return buildTaskDetail({
+    fm: args.fm,
     rev: args.rev,
-    valid: true,
     summaryMarkdown: getSection(args.parsed, "Summary"),
     scopeMarkdown: getSection(args.parsed, "Scope"),
     qaMarkdown: getSection(args.parsed, "QA"),
-    observations: parseObservations(getSection(args.parsed, "Observations")),
+    observations: limit === undefined ? all : all.slice(-Math.max(1, limit)),
+    observationCount: all.length,
     attachments: args.attachments,
-    resourceFiles: args.resourceFiles ?? [],
+    resourceFiles: args.resourceFiles,
     rawBody: args.rawBody,
-    updatedEffective: updatedEffective(args.fm.updated, args.rev),
-  };
+    paged: limit !== undefined,
+  });
 }
