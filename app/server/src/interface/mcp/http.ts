@@ -57,6 +57,7 @@ export function registerMcpHttp(app: FastifyInstance, services: Services, env: E
         command: path.join(env.root, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx"),
         args: ["src/mcp.ts"],
         cwd: path.join(env.root, "app", "server"),
+        env: { AIDAILYTASKS_DATA_ROOT: path.dirname(env.boardDir) },
       },
       tools: MCP_TOOL_SUMMARY,
     };

@@ -32,6 +32,7 @@ import type { ProjectDocumentationService } from "../../application/projectDocum
 import { NotFoundError, ValidationError, PayloadTooLargeError } from "../../errors";
 
 export interface Services {
+  storageInfo: () => Record<string, unknown>;
   config: ConfigService;
   projects: ProjectsService;
   tasks: TaskService;

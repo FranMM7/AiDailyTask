@@ -562,3 +562,81 @@ in an npm-workspaces monorepo. No database; the filesystem is the store.
 ## License
 
 This project is open source under the [MIT License](LICENSE).
+
+
+### Current task blockers
+
+`create_task` accepts an initial `blocker` and records its start automatically.
+Open the **Blocker** tab to write or preview detailed Markdown and save, or call `update_task` with
+`blocker: "Waiting for approval of the migration plan"`. `blocker` is empty when
+unblocked; `blocked_since` is maintained by the server. `get_task` returns the full Markdown (up to 100,000 characters); `list_tasks`
+returns a short excerpt with `blocker_truncated` and the start timestamp. A blocker is independent of status and dependency links.
+Setting, editing, or clearing it automatically appends an observation; resolution
+retains the previous reason and start/end timestamps in history. Use **Resolve blocker** in the tab, or clear it through MCP with
+`blocker: ""`. Identical writes do not create duplicate blocker events.
+Recurring successors start unblocked. Use the API/MCP or UI for these transitions;
+direct file edits bypass automatic lifecycle observations.
+
+#### MCP: write a message in the Blocker tab
+
+When progress requires missing information, approval, access, or an external dependency,
+read `get_task` and use its `rev` as `baseRev`. Call `update_task` with a **top-level**
+`blocker` string, not `body.blocker` or `add_observation`:
+
+```json
+{
+  "id": "C123",
+  "baseRev": 1789660000000,
+  "blocker": "Waiting for migration approval.\n\n## Context and evidence\nThe migration is prepared; validation passed in staging.\n\n## Attempts\nReviewed the rollback procedure. Production execution has not started.\n\n## Needed to unblock\nThe project owner must approve the migration plan and execution window."
+}
+```
+
+Replace the example ID and revision with the real task values. Include concrete evidence,
+attempted actions, and the exact decision or information required; name the responsible
+person only when known. The Markdown is displayed in the **Blocker** tab, up to 100,000
+characters. `create_task` also accepts `blocker` alongside its required title/category.
+
+Updating `blocker` replaces the entire message, so preserve relevant existing context.
+Omit it to leave the current blocker unchanged. On conflict, re-read the task and review
+the latest details before retrying. `list_tasks` contains an excerpt; use `get_task` for
+the full text, especially when `blocker_truncated` is true.
+
+Once the issue is resolved, re-read the task and call `update_task` with:
+
+```json
+{ "id": "C123", "baseRev": 1789660000001, "blocker": "" }
+```
+
+The server clears the active blocker and `blocked_since` and automatically adds a dated
+observation retaining the full previous message. Start and edit events are automatic too.
+Do not set `blocked_since` or add duplicate lifecycle observations. Recording a pending
+approval does not grant that approval or change task status.
+
+### Store board data on another drive
+
+Agents can call `get_storage_info` for active storage paths and relocation instructions.
+It is read-only and does not move files or change the running location.
+
+1. Stop the HTTP server and all stdio agent connections before copying data.
+2. Copy `board/`, `exports/`, `graphs/`, `project-docs/`, `board.config.json`, and
+   `projects.json` (whichever exist) to a folder such as `D:/AiDailyTasksData`.
+   Preserve attachments, observation logs, and the directory layout.
+3. Create `storage.local.json` in the application repository:
+
+   ```json
+   { "dataRoot": "D:/AiDailyTasksData" }
+   ```
+
+4. Restart the server and reconnect agents. Verify tasks, observations, attachments,
+   project documentation, and vocabulary before removing any original copy.
+   Refresh saved stdio configurations from **Connect**; generated configurations
+   explicitly carry the active data location.
+
+The pointer file is git-ignored. Relative paths resolve against the application
+repository. `AIDAILYTASKS_DATA_ROOT` overrides the file; all processes must use the
+same override. With neither setting, existing paths are unchanged. Web assets,
+templates, and executables stay in the application repository. Import, structured
+migration, and benchmark defaults follow the data location; explicit `--board`
+arguments take precedence. This setting selects storage at startup: it does not
+copy files or switch a running process. Keep external data out of any published
+repository and include it in your normal backups.

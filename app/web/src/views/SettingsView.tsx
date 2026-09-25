@@ -260,6 +260,12 @@ export function SettingsView() {
           </div>
         </header>
 
+        <Section title="Board data location" description="Keep your board on another drive. The default location is this application's repository.">
+          <p className="text-sm">Stop the server and local agent connections, then copy board, exports, graphs, project-docs, board.config.json and projects.json into your chosen folder. Keep the originals until you have verified the copy.</p>
+          <p className="mt-2 text-sm">Create <code>storage.local.json</code> in the application repository with your destination, then restart the app and reconnect agents:</p>
+          <pre className="mt-2 overflow-auto rounded bg-slate-100 p-3 text-xs dark:bg-slate-900">{'{ "dataRoot": "D:/AiDailyTasksData" }'}</pre>
+          <p className="mt-2 text-xs text-slate-500">This file is separate from Save settings. AIDAILYTASKS_DATA_ROOT overrides it. If you copied a generated agent configuration, refresh it from Connect after changing location.</p>
+        </Section>
         <div className="grid gap-4 lg:grid-cols-2">
           <Section title="Board columns" description="Choose which configured statuses appear on the Kanban board and in what order — the board renders columns exactly as listed here. Backlog also has its own dedicated view.">
             <label className="mb-3 flex items-center gap-2 text-sm">

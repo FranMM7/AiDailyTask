@@ -63,7 +63,7 @@ function buildBlocks(info: McpInfo) {
     2,
   );
   const stdioConfig = JSON.stringify(
-    { mcpServers: { [name]: { command: info.stdio.command, args: info.stdio.args, cwd: info.stdio.cwd } } },
+    { mcpServers: { [name]: { command: info.stdio.command, args: info.stdio.args, cwd: info.stdio.cwd, env: info.stdio.env } } },
     null,
     2,
   );

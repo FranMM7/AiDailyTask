@@ -141,6 +141,8 @@ const KEY_ORDER: readonly (keyof Frontmatter)[] = [
   "risk",
   "status",
   "status_detail",
+  "blocker",
+  "blocked_since",
   "created",
   "updated",
   "completed",

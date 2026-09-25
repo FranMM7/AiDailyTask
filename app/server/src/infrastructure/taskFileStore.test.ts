@@ -12,7 +12,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import type { TaskDetail } from "@AiDailyTasks/shared";
+import { CreateRequestSchema, PatchRequestSchema, blockerExcerpt, type TaskDetail } from "@AiDailyTasks/shared";
 import { ConfigService } from "../config";
 import type { Env } from "../env";
 import { parseTaskFile } from "../domain/task";
@@ -304,3 +304,62 @@ test("auto mode reads whichever format a task is stored in", async () => {
     await fs.rm(env.root, { recursive: true, force: true });
   }
 });
+
+for (const format of ["markdown", "structured"] as const) {
+  test(`${format}: blocker lifecycle survives reload, ignores duplicate writes and rejects stale resolution`, async (t) => {
+    const env = await makeBoard(format);
+    t.after(() => fs.rm(env.root, { recursive: true, force: true }));
+    const repo = makeRepo(env);
+    let task = await repo.read("C01", 20);
+    assert.ok(task.valid);
+    assert.equal(task.blocker, "");
+    assert.equal(task.blocked_since, null);
+    const started = await repo.patch("C01", { baseRev: task.rev, fields: { blocker: "Waiting for approval" } });
+    assert.ok(!started.conflict);
+    assert.ok(started.task.blocked_since);
+    const since = started.task.blocked_since;
+    const stale = await repo.patch("C01", { baseRev: task.rev, fields: { blocker: "" } });
+    assert.ok(stale.conflict);
+    const duplicate = await repo.patch("C01", { baseRev: started.task.rev, fields: { blocker: "Waiting for approval" } });
+    assert.ok(!duplicate.conflict);
+    assert.equal(duplicate.task.observationCount, started.task.observationCount);
+    const edited = await repo.patch("C01", { baseRev: duplicate.task.rev, fields: { blocker: "Waiting for revised approval" } });
+    assert.ok(!edited.conflict);
+    assert.equal(edited.task.blocked_since, since);
+    const resolved = await repo.patch("C01", { baseRev: edited.task.rev, fields: { blocker: "" } });
+    assert.ok(!resolved.conflict);
+    task = await makeRepo(env).read("C01", 20);
+    assert.ok(task.valid);
+    assert.equal(task.blocker, "");
+    assert.equal(task.blocked_since, null);
+    const events = task.observations.filter((o) => o.markdown.startsWith("Blocker "));
+    assert.equal(events.length, 3);
+    assert.match(events[2].markdown, /Waiting for revised approval/);
+    assert.ok(events[2].markdown.includes(since));
+    assert.ok(events[2].markdown.includes(events[2].at));
+    assert.equal(task.status, "In progress");
+  });
+}
+
+
+for (const format of ["markdown", "structured"] as const) {
+  test(`${format}: detailed blocker Markdown survives creation, reload and resolution history`, async (t) => {
+    const env = await makeBoard(format);
+    t.after(() => fs.rm(env.root, { recursive: true, force: true }));
+    const repo = makeRepo(env);
+    const markdown = "## Waiting for approval\n\n" + "Evidence and attempted fix.\n".repeat(500) + "\n## Required decision\n\nApprove the migration.";
+    const archivedDetails = markdown.split("\n").map(line => `> ${line}`).join("\n");
+    const created = await repo.create(CreateRequestSchema.parse({ title: "Detailed blocker", category: "Feature", blocker: markdown }));
+    const reloaded = await makeRepo(env).read(created.id, 20);
+    assert.ok(reloaded.valid);
+    assert.equal(reloaded.blocker, markdown);
+    assert.ok(reloaded.observations.some(o => o.markdown.includes(archivedDetails)));
+    assert.ok(blockerExcerpt(markdown).length <= 243);
+    assert.ok(!PatchRequestSchema.safeParse({ baseRev: reloaded.rev, fields: { blocker: "x".repeat(100_001) } }).success);
+    const resolved = await repo.patch(created.id, { baseRev: reloaded.rev, fields: { blocker: "" } });
+    assert.ok(!resolved.conflict);
+    assert.equal(resolved.task.blocker, "");
+    assert.equal(resolved.task.blocked_since, null);
+    assert.ok(resolved.task.observations.some(o => o.markdown.startsWith("Blocker resolved") && o.markdown.includes(archivedDetails)));
+  });
+}

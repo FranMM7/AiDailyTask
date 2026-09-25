@@ -96,6 +96,8 @@ export const FrontmatterSchema = z.object({
   risk: z.string().trim().min(1),
   status: z.string().trim().min(1),
   status_detail: z.string().default(""),
+  blocker: z.string().trim().max(100_000).default(""),
+  blocked_since: z.string().datetime().nullable().default(null),
   created: z.string().optional(),
   updated: z.string().optional(),
   completed: z.string().optional(),
@@ -130,6 +132,7 @@ export const EditableFieldsSchema = FrontmatterSchema.pick({
   risk: true,
   status: true,
   status_detail: true,
+  blocker: true,
   completed: true,
   tags: true,
   skills: true,
@@ -240,6 +243,7 @@ export const CreateRequestSchema = z.object({
   risk: z.string().trim().min(1).default("Low"),
   status: z.string().trim().min(1).default("Not started"),
   status_detail: z.string().default(""),
+  blocker: z.string().trim().max(100_000).optional(),
   tags: z.array(z.string()).default([]),
   skills: z.array(z.string()).default([]),
   recurring: z.boolean().default(false),
@@ -482,7 +486,7 @@ export interface McpInfo {
   /** Streamable-HTTP transport mounted on the running server. */
   http: { url: string };
   /** stdio transport an agent spawns locally. */
-  stdio: { command: string; args: string[]; cwd: string };
+  stdio: { command: string; args: string[]; cwd: string; env?: Record<string, string> };
   tools: McpToolInfo[];
 }
 
@@ -567,4 +571,10 @@ export function idNum(id: string): number {
 export function normalizeId(id: string, prefix = "C", pad = 2): string {
   const n = idNum(id);
   return Number.isNaN(n) ? id : padId(n, prefix, pad);
+}
+
+/** Keep board cards and agent listings compact; get_task returns the full Markdown. */
+export function blockerExcerpt(markdown: string, max = 240): string {
+  const plain = markdown.replace(/[#*_`>]/g, "").replace(/\s+/g, " ").trim();
+  return plain.length > max ? plain.slice(0, max).trimEnd() + "..." : plain;
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { NavLink, useSearchParams } from "react-router-dom";
+import { NavLink, useLocation, useSearchParams } from "react-router-dom";
 import {
   LayoutGrid,
   Inbox,
@@ -58,6 +58,7 @@ function SseDot() {
 export function TopBar() {
   const { data: config } = useConfig();
   const [params, setParams] = useSearchParams();
+  const location = useLocation();
   const { theme, toggleTheme } = useUiStore();
   const [exportOpen, setExportOpen] = useState(false);
   const [newTaskOpen, setNewTaskOpen] = useState(false);
@@ -65,24 +66,27 @@ export function TopBar() {
   const [searchOpen, setSearchOpen] = useState(false);
   const searchInput = useRef<HTMLInputElement>(null);
 
-  // debounced search box synced to ?q
+  // Navigation cancels pending input so a delayed search cannot undo a reset.
   const [q, setQ] = useState(params.get("q") ?? "");
+  const searchTimer = useRef<ReturnType<typeof setTimeout>>();
   useEffect(() => {
-    setQ(params.get("q") ?? "");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params.get("q")]);
-  useEffect(() => {
-    const t = setTimeout(() => {
-      const current = params.get("q") ?? "";
-      if (q === current) return;
-      const next = new URLSearchParams(params);
-      if (q) next.set("q", q);
-      else next.delete("q");
-      setParams(next, { replace: true });
+    clearTimeout(searchTimer.current);
+    setQ(new URLSearchParams(location.search).get("q") ?? "");
+    return () => clearTimeout(searchTimer.current);
+  }, [location.key, location.search]);
+
+  const onSearch = (value: string) => {
+    setQ(value);
+    clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => {
+      setParams((current) => {
+        const next = new URLSearchParams(current);
+        if (value) next.set("q", value);
+        else next.delete("q");
+        return next;
+      }, { replace: true });
     }, 250);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q]);
+  };
   useEffect(() => {
     if (searchOpen) requestAnimationFrame(() => searchInput.current?.focus());
   }, [searchOpen]);
@@ -105,7 +109,9 @@ export function TopBar() {
         {NAV.filter((item) => !(config?.navigation?.hiddenTabs ?? []).includes(item.to)).map(({ to, label, icon: Icon, end }) => (
           <NavLink
             key={to}
-            to={{ pathname: to, search: window.location.search }}
+            to={{ pathname: to, search: to === "/" ? "" : location.search }}
+            aria-label={label}
+            title={to === "/" ? "Board - reset filters" : label}
             end={end}
             className={({ isActive }) =>
               `inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium transition ${
@@ -129,7 +135,7 @@ export function TopBar() {
           <input
             ref={searchInput}
             value={q}
-            onChange={(e) => setQ(e.target.value)}
+            onChange={(e) => onSearch(e.target.value)}
             onBlur={() => { if (!q) setSearchOpen(false); }}
             onKeyDown={(e) => { if (e.key === "Escape") { setSearchOpen(false); searchInput.current?.blur(); } }}
             placeholder="Search tasks…"
@@ -145,7 +151,7 @@ export function TopBar() {
           />
           <input
             value={q}
-            onChange={(e) => setQ(e.target.value)}
+            onChange={(e) => onSearch(e.target.value)}
             placeholder="Search…"
             className="w-40 rounded-md border border-slate-300 bg-transparent py-1.5 pl-7 pr-2 text-sm outline-none focus:border-blue-500 dark:border-slate-700 sm:w-56"
           />

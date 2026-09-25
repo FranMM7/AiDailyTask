@@ -82,6 +82,31 @@ Appended, newest last. Header format: `### <ISO8601Z> — <author>`, where `<aut
 or your own name (e.g. `claude`, `codex`).
 ```
 
+## MCP feature parity
+
+When adding task or board-data capabilities, expose compatible operations and fields
+through MCP as well as the UI/HTTP API. Verify HTTP and stdio transports and keep
+tool schemas, compact responses, descriptions, and the Connect tool list current.
+Browser-only navigation needs no MCP equivalent; agents use explicit task filters.
+Use `get_storage_info` to discover active paths before direct file access.
+
+## Current blockers and data location
+
+`blocker` holds detailed current blocking context as Markdown (empty means clear;
+up to 100,000 characters). Put the key reason first, then evidence, attempts, and
+what is needed to unblock. Compact `list_tasks` returns an excerpt and
+`blocker_truncated`; use `get_task` for the full text. `blocked_since`
+is the server-maintained UTC start timestamp (null when clear). Read these fields
+before resuming work. Use `update_task` to set or clear `blocker`: transitions append
+observations automatically, including start/end dates on resolution. Direct edits
+bypass lifecycle logging. A blocker does not change status or dependency relationships.
+
+Private data defaults to this repository. `storage.local.json` may point to a different
+`dataRoot`; `AIDAILYTASKS_DATA_ROOT` takes precedence. Resolve that location before
+reading or editing board/project data directly. Stop all writers before relocating,
+preserve the originals until verified, and restart/reconnect after changing the pointer.
+See README for the complete list of directories/files to copy.
+
 ## How to edit the board
 
 You edit these files **directly** with your normal file tools — the server (if running) watches the

@@ -13,6 +13,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
   CreateRequestSchema,
+  blockerExcerpt,
   TaskFilterSchema,
   normalizeId,
   type EditableFields,
@@ -57,11 +58,11 @@ function fail(message: string): ToolResult {
 
 /** Names + one-liners for the registered tools — surfaced by GET /api/mcp-info for the Connect page. */
 export const MCP_TOOL_SUMMARY: { name: string; description: string }[] = [
-  { name: "list_tasks", description: "List board tasks (summaries) with optional filters." },
+  { name: "list_tasks", description: "List board tasks with optional filters and short blocker excerpts; get_task returns full blocker Markdown." },
   { name: "get_task", description: "Read one task with its latest observation page; may include a ready code-graph usage hint." },
   { name: "list_observations", description: "Read a bounded page of a task's observation history." },
-  { name: "create_task", description: "Create a task; the id is auto-assigned." },
-  { name: "update_task", description: "Patch a task's fields, reusable resources, and/or summary/scope/QA notes." },
+  { name: "create_task", description: "Create a task, optionally with blocker Markdown; the id is auto-assigned." },
+  { name: "update_task", description: "Patch task fields/content. Set blocker Markdown to record a blocker; set blocker to an empty string to resolve with automatic history." },
   { name: "delete_task", description: "Permanently delete an archived task after revision confirmation." },
   { name: "add_observation", description: "Append a timestamped note to a task's Observations log." },
   { name: "list_attachments", description: "List the files attached to a task (name, size, mime, url)." },
@@ -81,6 +82,7 @@ export const MCP_TOOL_SUMMARY: { name: string; description: string }[] = [
   { name: "get_project_documentation", description: "Get project details, agent instructions, and imported README." },
   { name: "update_project_documentation", description: "Save project-specific Markdown instructions for people and agents." },
   { name: "import_project_readme", description: "Copy a project's root README into its private documentation store." },
+  { name: "get_storage_info", description: "Inspect active board data paths and instructions for relocation." },
   { name: "get_config", description: "Board vocabulary: statuses, categories, severities, risks, projects." },
   { name: "update_config", description: "Update local board vocabulary and workspace visibility preferences." },
   { name: "get_graph", description: "Task relationship graph (depends_on / blocks / relates_to / parent)." },
@@ -99,7 +101,18 @@ const CONFLICT_MSG =
   "Conflict: the task changed on disk since it was read. Re-read the task and retry with its current rev.";
 
 export function buildMcpServer(services: Services, version = "1.0.0"): McpServer {
-  const server = new McpServer({ name: "AiDailyTasks", version });
+  const server = new McpServer({ name: "AiDailyTasks", version }, {
+    instructions: "When task work cannot proceed because information, approval, access, or an external dependency is missing, " +
+      "record the current situation using update_task's top-level blocker argument. This Markdown appears in the Blocker tab. " +
+      "Start with a short reason, then document evidence, attempted actions, the exact question/approval needed and who can resolve it when known. " +
+      "Read get_task first and pass its rev as baseRev; blocker replaces the full current text, so preserve still-relevant details. " +
+      "Example: update_task({id:'C123', baseRev:CURRENT_REV, blocker:'Waiting for approval.\n\n## Context\nMigration is ready.\n\n## Needed to unblock\nApprove the migration plan.'}). " +
+      "create_task accepts blocker too. list_tasks returns only an excerpt; get_task returns the full Markdown. " +
+      "Once resolved, call update_task({id:'C123', baseRev:CURRENT_REV, blocker:''}). " +
+      "Omit blocker to leave it unchanged. Do not write blocked_since yourself. " +
+      "The server records start/update/resolution observations automatically, including full details and dates; do not duplicate them with add_observation. " +
+      "A blocker records a pending decision; it does not grant approval or change task status.",
+  });
   // One McpServer instance is created per HTTP session (and once per stdio process),
   // so this keeps the advisory useful without repeating it on every task read.
   const graphifyHintsShown = new Set<string>();
@@ -110,7 +123,7 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
     {
       title: "List tasks",
       description:
-        "List board tasks (summaries) with optional filters. Archived tasks are excluded by default.",
+        "List board tasks with optional filters and short blocker excerpts. Use get_task for full blocker Markdown when blocker_truncated is true. Archived tasks are excluded by default.",
       inputSchema: {
         project: z.string().optional(),
         status: z.array(z.string()).optional(),
@@ -135,6 +148,9 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
               id: t.id,
               title: t.title,
               status: t.status,
+              blocker: blockerExcerpt(t.blocker),
+              blocker_truncated: t.blocker.length > 240,
+              blocked_since: t.blocked_since,
               category: t.category,
               severity: t.severity,
               project: t.project,
@@ -193,6 +209,8 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
         risk: t.risk,
         status: t.status,
         status_detail: t.status_detail,
+        blocker: t.blocker,
+        blocked_since: t.blocked_since,
         created: t.created,
         updated: t.updated,
         completed: t.completed,
@@ -433,7 +451,7 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
     {
       title: "Create task",
       description:
-        "Create a task. The id is auto-assigned unless an available explicit id is provided. Only title and category are required.",
+        "Create a task. The id is auto-assigned unless an available explicit id is provided. Only title and category are required. Optional blocker Markdown appears in the Blocker tab and automatically records its start; put the reason first, followed by evidence, attempts, and what is needed to unblock.",
       inputSchema: {
         id: z.string().optional().describe("Optional explicit task id, e.g. C99"),
         title: z.string().min(1),
@@ -443,6 +461,7 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
         risk: z.string().min(1).optional(),
         status: z.string().min(1).optional(),
         status_detail: z.string().optional(),
+        blocker: z.string().trim().max(100_000).optional().describe("Initial blocker Markdown (up to 100,000 characters); include context, evidence, attempted actions and what unblocks work. Records its start automatically"),
         summary: z.string().optional(),
         scope: z.string().optional(),
         qa: z.string().optional().describe("How to test this task (markdown '## QA' section); most tasks omit it"),
@@ -460,7 +479,7 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
       const parsed = CreateRequestSchema.safeParse(args);
       if (!parsed.success) return fail(`Invalid task: ${parsed.error.message}`);
       const task = await services.tasks.create(parsed.data);
-      return ok({ id: task.id, rev: task.rev, title: task.title, status: task.status });
+      return ok({ id: task.id, rev: task.rev, title: task.title, status: task.status, blocker: task.blocker, blocked_since: task.blocked_since });
     },
   );
 
@@ -469,7 +488,10 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
     {
       title: "Update task",
       description:
-        "Patch a task's fields and/or summary/scope/qa. Pass baseRev for optimistic concurrency; if omitted, the current rev is used.",
+        "Patch a task's fields and/or summary/scope/qa. Pass baseRev from get_task for optimistic concurrency; if omitted, the current rev is used. " +
+        "To add or edit the Blocker tab, pass top-level blocker with the full Markdown (not body.blocker or an observation). " +
+        "It replaces existing blocker text. Include a short reason, context/evidence, attempted actions, and the exact missing information or approval. " +
+        "Omitting blocker leaves it unchanged; blocker: \"\" resolves it. The server maintains blocked_since and automatically logs start, edits and resolution with full details and dates. No separate add_observation call is needed.",
       inputSchema: {
         id: z.string(),
         baseRev: z.number().optional(),
@@ -480,6 +502,7 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
         risk: z.string().min(1).optional(),
         project: z.string().optional(),
         status_detail: z.string().optional(),
+        blocker: z.string().trim().max(100_000).optional().describe("Full blocker Markdown (up to 100,000 characters); include context, evidence, attempted actions and what unblocks work. Empty string resolves it and archives details with dates automatically"),
         tags: z.array(z.string()).optional(),
         skills: z.array(z.string()).optional(),
         recurring: z.boolean().optional(),
@@ -508,7 +531,7 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
       };
       const res = await services.tasks.patch(id, body);
       if (res.conflict) return fail(CONFLICT_MSG);
-      return ok({ id: res.task.id, rev: res.task.rev, status: res.task.status, updated: res.task.updated });
+      return ok({ id: res.task.id, rev: res.task.rev, status: res.task.status, updated: res.task.updated, blocker: res.task.blocker, blocked_since: res.task.blocked_since });
     },
   );
 
@@ -698,6 +721,16 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
         return fail(`Cannot delete project ${id}: ${(err as Error).message}`);
       }
     },
+  );
+
+  server.registerTool(
+    "get_storage_info",
+    {
+      title: "Get board storage location",
+      description: "Read the active data root and board/project/config paths before direct file access. Includes configuration and safe offline relocation instructions. Does not move data or change storage.",
+      annotations: { readOnlyHint: true },
+    },
+    async () => ok(services.storageInfo()),
   );
 
   server.registerTool(

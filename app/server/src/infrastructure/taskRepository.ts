@@ -63,6 +63,11 @@ const TRACKED_FIELDS: Array<[keyof Frontmatter, string]> = [
   ["recurring", "recurring"],
 ];
 
+/** Quote embedded Markdown so headings cannot become legacy task/observation boundaries. */
+function blockerHistory(markdown: string): string {
+  return markdown.split(/\r?\n/).map((line) => `> ${line}`).join("\n");
+}
+
 function fmtVal(v: unknown): string {
   const s = v == null ? "" : String(v);
   return s.trim() === "" ? "(none)" : s;
@@ -332,6 +337,8 @@ export class FsTaskRepository {
         risk: req.risk,
         status: req.status,
         status_detail: req.status_detail,
+        blocker: req.blocker ?? "",
+        blocked_since: req.blocker ? new Date().toISOString() : null,
         created: today,
         updated: today,
         completed: req.status === "Completed" ? today : undefined,
@@ -357,12 +364,15 @@ export class FsTaskRepository {
           ...(req.qa.trim() ? [{ heading: "QA", content: req.qa.trim() }] : []),
         ],
       };
+      const appendObservations: Observation[] = fm.blocker ? [{
+        at: fm.blocked_since!, author: "system", markdown: `Blocker started:\n\n${blockerHistory(fm.blocker)}`,
+      }] : [];
       const rev = await this.store.save(
         id,
-        { frontmatter: fm, body, previousObservationCount: 0 },
+        { frontmatter: fm, body, appendObservations, previousObservationCount: 0 },
         await this.store.newTaskFormat(),
       );
-      const detail = await this.detailAfterWrite(id, fm, body, rev, 0);
+      const detail = await this.detailAfterWrite(id, fm, body, rev, appendObservations.length);
       this.bus.publish({ type: "task.created", id, task: this.summaryFromDetail(detail) });
       return detail;
     });
@@ -408,6 +418,19 @@ export class FsTaskRepository {
         const before: Frontmatter = { ...fm };
         const prevStatus = fm.status;
         Object.assign(fm, req.fields);
+        if (req.fields.blocker !== undefined && fm.blocker !== before.blocker) {
+          const at = new Date().toISOString();
+          fm.blocked_since = fm.blocker ? (before.blocked_since ?? at) : null;
+          appendObservations.push({
+            at,
+            author: "system",
+            markdown: fm.blocker
+              ? before.blocker
+                ? `Blocker updated (started ${fm.blocked_since}).\n\nPrevious details:\n\n${blockerHistory(before.blocker)}\n\nUpdated details:\n\n${blockerHistory(fm.blocker)}`
+                : `Blocker started:\n\n${blockerHistory(fm.blocker)}`
+              : `Blocker resolved (started ${before.blocked_since ?? "unknown"}; resolved ${at}):\n\n${blockerHistory(before.blocker)}`,
+          });
+        }
         fm.id = normalizeId(id); // id is not editable
         if (req.fields.status !== undefined) {
           if (req.fields.status === "Completed") {
@@ -622,6 +645,8 @@ export class FsTaskRepository {
       risk: detail.risk,
       status: detail.status,
       status_detail: detail.status_detail,
+      blocker: detail.blocker,
+      blocked_since: detail.blocked_since,
       created: detail.created,
       updated: detail.updated,
       completed: detail.completed,

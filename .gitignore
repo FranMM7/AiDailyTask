@@ -27,3 +27,9 @@ projects.json.tmp-*
 **/settings.local.json
 .mcp.json
 import-source/
+
+# Machine-local pointer to private board data
+storage.local.json
+
+# Generated Graphify output
+/graphify-out/

@@ -49,6 +49,9 @@ export function FilterBar() {
     params.getAll("status").length > 0 ||
     params.getAll("category").length > 0 ||
     params.getAll("severity").length > 0 ||
+    !!params.get("q") ||
+    !!params.get("project") ||
+    !!params.get("archived") ||
     !!params.get("tag") ||
     !!params.get("dateField") ||
     !!params.get("dateFrom") ||
@@ -56,6 +59,9 @@ export function FilterBar() {
 
   const clearAll = () => {
     const next = new URLSearchParams(params);
+    next.delete("q");
+    next.delete("project");
+    next.delete("archived");
     next.delete("status");
     next.delete("category");
     next.delete("severity");
@@ -86,7 +92,7 @@ export function FilterBar() {
           onClick={clearAll}
           className="ml-auto inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs text-slate-500 hover:text-slate-900 dark:hover:text-white"
         >
-          <X size={12} /> Clear
+          <X size={12} /> Clear filters
         </button>
       )}
     </div>

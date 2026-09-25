@@ -1,3 +1,4 @@
+import { loadEnv } from "../env";
 /**
  * Convert the board from legacy `task.md` files to the structured store
  * (`task.json` + `observations.jsonl`), in two deliberately separate runs.
@@ -81,7 +82,7 @@ function parseOptions(): Options {
     // Retain the original flag-only invocation (--input/--output), which meant
     // "stage a conversion", so documented commands keep working.
     command: command ?? (output ? "convert" : "status"),
-    board: option("--board") ?? option("--input") ?? "board",
+    board: option("--board") ?? option("--input") ?? loadEnv().boardDir,
     output,
     dryRun: process.argv.includes("--dry-run"),
     confirmed: process.argv.includes("--yes"),

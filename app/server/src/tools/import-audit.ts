@@ -1,3 +1,4 @@
+import { resolveDataRoot } from "../env";
 /**
  * One-time audit importer (idempotent, re-runnable).
  *
@@ -129,7 +130,7 @@ function rewriteDocRefs(text: string, docNames: Set<string> | undefined): string
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const root = resolveRoot();
+  const root = resolveDataRoot(resolveRoot());
   const boardDir = join(root, "board");
   const metaDir = join(boardDir, "_meta");
   const docsDir = dirname(args.source);
@@ -257,6 +258,8 @@ async function main(): Promise<void> {
       risk: t.risk,
       status: t.status,
       status_detail: t.statusDetail,
+      blocker: "",
+      blocked_since: null,
       ...(t.created ? { created: t.created } : {}),
       ...(t.updated ? { updated: t.updated } : {}),
       ...(t.status === "Completed" && t.completed ? { completed: t.completed } : {}),

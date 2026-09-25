@@ -3,10 +3,12 @@
 All notable changes to AiDailyTasks are documented here. The project follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions.
 
-## Unreleased — 2026-07-20
+## Unreleased — 2026-09-25
 
 ### Fixed
 
+- Returning to Board resets navigation filters. Clear filters also removes search, project,
+  and archive filters; pending search updates cannot restore filters after navigation.
 - Streamable-HTTP requests with an unknown or expired `mcp-session-id` now return 404, while missing
   required ids remain 400. This gives compliant MCP clients the required signal to initialize a new
   session after server restart, session deletion, or idle expiry. A repeatable verification command
@@ -15,6 +17,13 @@ All notable changes to AiDailyTasks are documented here. The project follows
 
 ### Added
 
+- Current task blockers with a dedicated Markdown editor and preview, card excerpts, and
+  server-maintained start dates. Create, edit, and resolution automatically retain dated history
+  through the UI, HTTP API, and MCP, including detailed blockers up to 100,000 characters.
+- Configurable private data storage through `storage.local.json` or `AIDAILYTASKS_DATA_ROOT`,
+  with relocation guidance in Settings and README. MCP `get_storage_info` reports active paths.
+- Tests for data-location resolution and blocker lifecycle, concurrency, and Markdown preservation
+  in both structured and legacy task stores.
 - Task `skills` metadata with multi-value editing, configured suggestions, deterministic Markdown
   persistence, Markdown export, and MCP create/read/update support.
 - Configured skill titles with multi-line agent instructions. MCP task reads resolve every selected
@@ -32,6 +41,12 @@ All notable changes to AiDailyTasks are documented here. The project follows
 
 ### Changed
 
+- Generated stdio MCP configurations include the active data root. Import, migration, and
+  task-store benchmark defaults follow the configured storage location.
+- MCP tool descriptions, initialization guidance, and agent instructions explain blocker updates,
+  compact excerpts, full-detail retrieval, and safe storage relocation.
+- The observation composer appears before the note history in the task drawer.
+- Git ignores the machine-local storage pointer and generated `graphify-out/` directory.
 - Statuses, categories, severity, and risk contracts now accept configured local values instead of
   compile-time-only enums.
 - Markdown exports include task skills and recurrence state.

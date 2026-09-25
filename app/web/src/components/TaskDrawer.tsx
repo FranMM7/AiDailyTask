@@ -1,3 +1,4 @@
+import { BlockerSection } from "./BlockerSection";
 import {
   useEffect,
   useRef,
@@ -183,6 +184,15 @@ function ObservationsSection({ task }: { task: TaskDetail }) {
   return (
     <section>
       <h3 className="mb-2 text-sm font-semibold">Observations ({task.observationCount})</h3>
+      <ObservationComposer
+        text={text}
+        onTextChange={setText}
+        onPaste={handlePaste}
+        taRef={taRef}
+        pasting={pasting}
+        pending={addObs.isPending}
+        onSubmit={submit}
+      />
       <ol className="space-y-3">
         {[...task.observations].reverse().map((o: Observation, i) => (
           <li
@@ -213,12 +223,34 @@ function ObservationsSection({ task }: { task: TaskDetail }) {
         </button>
       )}
 
-      <div className="mt-3">
+    </section>
+  );
+}
+
+function ObservationComposer({
+  text,
+  onTextChange,
+  onPaste,
+  taRef,
+  pasting,
+  pending,
+  onSubmit,
+}: {
+  text: string;
+  onTextChange: (text: string) => void;
+  onPaste: (event: ClipboardEvent<HTMLTextAreaElement>) => void;
+  taRef: RefObject<HTMLTextAreaElement>;
+  pasting: boolean;
+  pending: boolean;
+  onSubmit: () => void;
+}) {
+  return (
+      <div className="mb-3">
         <textarea
           ref={taRef}
           value={text}
-          onChange={(e) => setText(e.target.value)}
-          onPaste={handlePaste}
+          onChange={(e) => onTextChange(e.target.value)}
+          onPaste={onPaste}
           placeholder="Add a note (markdown supported; paste a screenshot to embed it)…"
           rows={3}
           className="w-full rounded-md border border-slate-300 bg-transparent p-2 text-sm outline-none focus:border-blue-500 dark:border-slate-700"
@@ -239,16 +271,15 @@ function ObservationsSection({ task }: { task: TaskDetail }) {
           </span>
           <button
             type="button"
-            onClick={submit}
-            disabled={!text.trim() || addObs.isPending || pasting}
+            onClick={onSubmit}
+            disabled={!text.trim() || pending || pasting}
             className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
           >
             <Send size={14} />
-            {addObs.isPending ? "Adding…" : "Add note"}
+            {pending ? "Adding…" : "Add note"}
           </button>
         </div>
       </div>
-    </section>
   );
 }
 
@@ -641,7 +672,7 @@ function QaSection({ task }: { task: TaskDetail }) {
   );
 }
 
-type DrawerTab = "details" | "attachments" | "qa";
+type DrawerTab = "details" | "attachments" | "qa" | "blocker";
 
 function TabButton({
   active,
@@ -718,6 +749,12 @@ function DrawerBody({ id }: { id: string }) {
             label="Details"
           />
           <TabButton
+            active={tab === "blocker"}
+            onClick={() => setTab("blocker")}
+            icon={<AlertTriangle size={14} />}
+            label={task.blocker ? "Blocker (active)" : "Blocker"}
+          />
+          <TabButton
             active={tab === "attachments"}
             onClick={() => setTab("attachments")}
             icon={<Paperclip size={14} />}
@@ -752,6 +789,7 @@ function DrawerBody({ id }: { id: string }) {
         )}
         {tab === "attachments" && <AttachmentsSection task={task} />}
         {tab === "qa" && <QaSection task={task} />}
+        {tab === "blocker" && <BlockerSection key={task.id} task={task} />}
       </div>
 
       <aside className="lg:order-2 lg:col-start-2">

@@ -6,6 +6,7 @@
  * HTTP-only concerns (Fastify, SSE hub, watcher, config-file watching) stay in main.ts.
  */
 import fs from "node:fs/promises";
+import path from "node:path";
 import { ConfigService } from "./config";
 import { ProjectsService } from "./projects";
 import { RecentWrites } from "./infrastructure/recentWrites";
@@ -53,6 +54,19 @@ export async function buildCore(env: Env, bus: EventBus): Promise<Core> {
   await projects.ensureFile();
 
   const services: Services = {
+    storageInfo: () => ({
+      applicationRoot: env.root,
+      dataRoot: path.dirname(env.boardDir),
+      boardDir: env.boardDir,
+      exportsDir: env.exportsDir,
+      graphsDir: env.graphsDir,
+      projectDocsDir: env.projectDocsDir,
+      configPath: env.configPath,
+      projectsPath: env.projectsPath,
+      storageSettingsPath: path.join(env.root, "storage.local.json"),
+      environmentOverride: "AIDAILYTASKS_DATA_ROOT",
+      relocation: "Stop HTTP and all stdio writers. Copy board, exports, graphs, project-docs, board.config.json and projects.json to an existing destination directory. Set dataRoot in storage.local.json (the environment override takes precedence). Restart and reconnect all clients; refresh generated stdio configs from Connect. Verify the copy before removing originals. This tool is read-only; it does not move files or switch running processes.",
+    }),
     config,
     projects,
     tasks: new TaskService(repo),

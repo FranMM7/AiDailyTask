@@ -1,3 +1,4 @@
+import { loadEnv } from "../env";
 /**
  * Measure the request paths this storage format exists to make fast, against a
  * real board. Reads only — point it at a copy if you want to be certain.
@@ -49,7 +50,7 @@ async function time(label: string, runs: number, fn: () => Promise<unknown>): Pr
 }
 
 async function main(): Promise<void> {
-  const boardDir = path.resolve(REPO_ROOT, option("--board", "board"));
+  const boardDir = path.resolve(REPO_ROOT, option("--board", loadEnv().boardDir));
   const store = option("--store", "auto");
   if (!isTaskStoreMode(store)) throw new Error(`--store must be auto|markdown|json (got "${store}")`);
   const task = option("--task", "");
