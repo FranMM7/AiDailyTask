@@ -1,3 +1,4 @@
+import { renderObservation } from "../domain/observation";
 /**
  * The board's file-format boundary.
  *
@@ -21,6 +22,7 @@
  */
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import type { Stats } from "node:fs";
 import { nanoid } from "nanoid";
 import type { Frontmatter, Observation } from "@AiDailyTasks/shared";
@@ -120,7 +122,7 @@ function withoutObservations(body: ParsedBody): ParsedBody {
 
 function renderObservationSection(observations: readonly Observation[]): string {
   return observations
-    .map((observation) => `### ${observation.at} — ${observation.author}\n\n${observation.markdown}`)
+    .map(renderObservation)
     .join("\n\n");
 }
 
@@ -270,13 +272,16 @@ export class TaskFileStore {
         rawBody: parsed.rawBody,
       };
     }
+    const history = getSection(parsed.parsed, OBSERVATIONS_HEADING);
+    const fingerprint = createHash("sha256").update(history.trim()).digest("hex");
     return {
       ok: true,
       format: "markdown",
-      frontmatter: parsed.frontmatter,
+      frontmatter: parsed.frontmatter.observation_fingerprint === fingerprint
+        ? parsed.frontmatter : { ...parsed.frontmatter, status_detail_updated_at: null },
       body: withoutObservations(parsed.parsed),
       rev: stat.mtimeMs,
-      observationCount: parseObservations(getSection(parsed.parsed, OBSERVATIONS_HEADING)).length,
+      observationCount: parseObservations(history).length,
     };
   }
 
@@ -301,7 +306,7 @@ export class TaskFileStore {
       return {
         ok: true,
         format: "structured",
-        frontmatter: task.frontmatter,
+        frontmatter: task.history?.modified_at !== undefined && task.history.modified_at !== (historyStat?.mtimeMs ?? 0) ? {...task.frontmatter,status_detail_updated_at:null} : task.frontmatter,
         body: withoutObservations({ preamble: task.body.preamble, sections: task.body.sections }),
         rev,
         // Trust the stamp only while the history file is byte-for-byte the size
@@ -358,7 +363,7 @@ export class TaskFileStore {
 
   private decodeObservation(line: string): Observation {
     const stored = JSON.parse(line) as StoredObservation;
-    return { at: stored.at, author: stored.author, markdown: stored.markdown };
+    return stored;
   }
 
   /**
@@ -457,8 +462,8 @@ export class TaskFileStore {
     if (!doc.ok) throw new Error(`Cannot render invalid task ${id}: ${doc.error}`);
     const observations = await this.loadObservations(id, "structured");
     const stored: StoredObservation[] = observations.map((observation) => ({
-      id: newObservationId(),
       ...observation,
+      id: observation.id ?? newObservationId(),
     }));
     return renderStructuredTaskMarkdown(
       {
@@ -488,8 +493,10 @@ export class TaskFileStore {
     // or an unrelated field edit would truncate the log.
     const existing = await this.loadObservations(id, "markdown").catch(() => [] as Observation[]);
     const observations = [...existing, ...(req.appendObservations ?? [])];
-    const body = setSection(req.body, OBSERVATIONS_HEADING, renderObservationSection(observations));
-    const stat = await this.atomicWrite(this.markdownFile(id), serializeTaskFile(req.frontmatter, body));
+    const history = renderObservationSection(observations);
+    const body = setSection(req.body, OBSERVATIONS_HEADING, history);
+    const observation_fingerprint = createHash("sha256").update(history.trim()).digest("hex");
+    const stat = await this.atomicWrite(this.markdownFile(id), serializeTaskFile({ ...req.frontmatter, observation_fingerprint }, body));
     return stat.mtimeMs;
   }
 
@@ -514,7 +521,7 @@ export class TaskFileStore {
         schemaVersion: 1,
         frontmatter: req.frontmatter,
         body: { preamble: body.preamble, sections: body.sections },
-        history: { count, bytes: historyStat?.size ?? 0 },
+        history: { count, bytes: historyStat?.size ?? 0, modified_at:historyStat?.mtimeMs ?? 0 },
       }),
     );
     return Math.max(taskStat.mtimeMs, historyStat?.mtimeMs ?? 0);
@@ -528,10 +535,8 @@ export class TaskFileStore {
   private async appendObservationLines(id: string, observations: readonly Observation[]): Promise<number> {
     const file = this.observationsFile(id);
     const stored: StoredObservation[] = observations.map((observation) => ({
-      id: newObservationId(),
-      at: observation.at,
-      author: observation.author,
-      markdown: observation.markdown,
+      ...observation,
+      id: observation.id ?? newObservationId(),
     }));
     await fs.appendFile(file, serializeObservationJsonl(stored), "utf8");
     const stat = await fs.stat(file);

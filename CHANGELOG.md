@@ -38,6 +38,13 @@ All notable changes to AiDailyTasks are documented here. The project follows
   lineage-based duplicate prevention and reports the successor through REST, MCP, and UI feedback.
 - Seven verified screenshots covering task skills and instructions, settings/vocabulary,
   configurable board columns, graph focus, and recurring successors.
+- Task workflow tracking with priorities, next actions, status freshness, verification-aware
+  observations, and paginated change history. Communication records are local-only; the app
+  does not send messages.
+- Temporary ngrok sharing from the local UI and CLI, with expiry, cleanup, and optional HTTP
+  Basic authentication. Without authentication, anyone with the link can view and edit the
+  entire board; sharing controls remain localhost-only.
+- Preview/hash/apply status-alias migration with journaled backups and resume/rollback support.
 
 ### Changed
 
@@ -56,6 +63,8 @@ All notable changes to AiDailyTasks are documented here. The project follows
   board/project data model.
 - Settings vocabulary rows retain focus while their editable id/title changes, including newly
   added skills, so continuous typing no longer drops after the first character.
+- Task workflow and communication fields are available consistently through the UI, HTTP API,
+  and MCP; task changes and communication pages support bounded pagination.
 
 ### Compatibility and verification
 
@@ -66,5 +75,6 @@ All notable changes to AiDailyTasks are documented here. The project follows
 - Workspace typecheck and production builds passed. Browser coverage passed at 1440×1000 and
   390×844 with no console/page errors. Stdio MCP checks covered tags/skills, settings, Graphify
   hint side effects, and concurrent recurring-task archive behavior.
+- Unit tests (50), workspace typecheck, and production build passed for the current worktree.
 - A disposable clone under `C:\Code\Others` was seeded for final QA and permanently removed after
   screenshot capture.

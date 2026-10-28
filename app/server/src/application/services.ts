@@ -1,3 +1,6 @@
+import { WorkflowService } from "./workflow";
+import { CommunicationFilterSchema } from "@AiDailyTasks/shared";
+import { observationEvidence } from "../domain/observation";
 /**
  * Application services: thin orchestration over the repository, attachment store,
  * config, graph and export rendering. Kept free of HTTP concerns.
@@ -47,7 +50,7 @@ export class LibraryResourceService {
 export class TaskService {
   private summariesInFlight: Promise<TaskSummaryOrInvalid[]> | null = null;
 
-  constructor(private readonly repo: FsTaskRepository) {}
+  constructor(private readonly repo: FsTaskRepository, private readonly workflow = new WorkflowService(repo)) {}
 
   async list(filter: TaskFilter): Promise<TaskSummaryOrInvalid[]> {
     // Collapse overlapping board/MCP list requests into one filesystem scan. This
@@ -59,12 +62,18 @@ export class TaskService {
       });
     }
     const all = await this.summariesInFlight;
-    return applyFilter(all, filter);
+    const normalized = {...filter,status:filter.status?.map(s=>this.repo.canonicalStatus(s))};
+    return applyFilter(all, normalized, p=>this.repo.priorityRank(p));
   }
 
-  get(id: string, observationLimit?: number): Promise<TaskDetailOrInvalid> {
-    return this.repo.read(id, observationLimit);
+  async get(id: string, observationLimit?: number): Promise<TaskDetailOrInvalid> {
+    const task=await this.repo.read(id, observationLimit);
+    if(task.valid) task.communication_page=await this.workflow.listCommunications(CommunicationFilterSchema.parse({task_id:id,limit:20}));
+    return task;
   }
+
+  observation(id: string, observationId: string) { return this.repo.observation(id,observationId); }
+  communication(id: string, req: import("@AiDailyTasks/shared").CommunicationMutation, create: boolean) { return this.repo.mutateCommunication(id,req,create); }
 
   listObservations(id: string, cursor?: string, limit?: number): Promise<ObservationPage> {
     return this.repo.listObservations(id, cursor, limit);
@@ -293,13 +302,20 @@ export class ExportService {
           const detail = await this.repo.read(t.id);
           if (!detail.valid) continue;
           lines.push(`### ${t.id} — ${mdEscapeCell(t.title)}`, "");
+          lines.push(`Priority: ${detail.priority}`, "");
+          if (detail.next_action) lines.push(`Next action: ${detail.next_action.text} — ${detail.next_action.owner ?? "Unassigned"} — ${detail.next_action.due_date ?? "Undated"}`, "");
+          if (req.includeScope) {
+            if (detail.qa) lines.push("**User test script**", "", detail.qa, "");
+            if (detail.verification) lines.push("**Verification evidence**", "", detail.verification, "");
+            for (const c of (await this.repo.document(t.id)).frontmatter.communications) lines.push(`**Communication ${c.id}: ${c.subject}**`,`${c.to} — ${c.channel} — ${c.state} — sent ${c.sent_at ?? "never"} — replied ${c.replied_at ?? "no"} — awaiting reply ${c.awaiting_reply}`,c.reference_url ?? "",c.body,"");
+          }
           if (req.includeScope && detail.scopeMarkdown.trim()) {
             lines.push("**Scope**", "", detail.scopeMarkdown.trim(), "");
           }
           if (req.includeObservations && detail.observations.length > 0) {
             lines.push("**Observations**", "");
             for (const o of detail.observations) {
-              lines.push(`- \`${o.at}\` — ${o.author}: ${mdEscapeCell(o.markdown)}`);
+              lines.push(`- \`${o.at}\` — ${o.author}: ${mdEscapeCell(observationEvidence(o))}`);
             }
             lines.push("");
           }

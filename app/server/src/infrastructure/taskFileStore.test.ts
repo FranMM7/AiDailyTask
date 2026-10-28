@@ -1,3 +1,7 @@
+import { WorkflowService } from "../application/workflow";
+import { StatusMigrationService, StatusMigrationSchema } from "../application/statusMigration";
+import { ChangesFilterSchema, CommunicationMutationSchema, CommunicationFilterSchema, TaskFilterSchema } from "@AiDailyTasks/shared";
+import { ExportService, TaskService } from "../application/services";
 /**
  * Format parity: the repository must behave identically whether a task is
  * stored as legacy task.md or as structured task.json + observations.jsonl.
@@ -134,11 +138,11 @@ const GENERATED_NOTE = /^Updated via web UI/;
 const GENERATED_HEADER = /^### \S+ — human$(?=\n\nUpdated via web UI)/gm;
 
 function comparable(detail: TaskDetail): unknown {
-  const { rev: _rev, updatedEffective: _updatedEffective, ...rest } = detail;
+  const { rev: _rev, updatedEffective: _updatedEffective, latest_note_at: _latest, observation_fingerprint: _historyFingerprint, ...rest } = detail;
   return {
     ...rest,
     observations: rest.observations.map((observation) =>
-      GENERATED_NOTE.test(observation.markdown) ? { ...observation, at: "<generated>" } : observation,
+      observation.recorded_at ? { ...observation, id: "<generated>", recorded_at: "<generated>", ...(observation.kind === "system" ? {at:"<generated>"} : {}) } : observation,
     ),
     rawBody: rest.rawBody.replace(GENERATED_HEADER, "### <generated> — human"),
   };
@@ -334,9 +338,9 @@ for (const format of ["markdown", "structured"] as const) {
     assert.equal(task.blocked_since, null);
     const events = task.observations.filter((o) => o.markdown.startsWith("Blocker "));
     assert.equal(events.length, 3);
-    assert.match(events[2].markdown, /Waiting for revised approval/);
-    assert.ok(events[2].markdown.includes(since));
-    assert.ok(events[2].markdown.includes(events[2].at));
+    assert.equal(events[2].changes?.blocker.before, "Waiting for revised approval");
+    assert.equal(events[2].started_at, since);
+    assert.equal(events[2].resolved_at, events[2].at);
     assert.equal(task.status, "In progress");
   });
 }
@@ -353,13 +357,261 @@ for (const format of ["markdown", "structured"] as const) {
     const reloaded = await makeRepo(env).read(created.id, 20);
     assert.ok(reloaded.valid);
     assert.equal(reloaded.blocker, markdown);
-    assert.ok(reloaded.observations.some(o => o.markdown.includes(archivedDetails)));
+    assert.ok(reloaded.observations.some(o => o.changes?.blocker.after === markdown));
     assert.ok(blockerExcerpt(markdown).length <= 243);
     assert.ok(!PatchRequestSchema.safeParse({ baseRev: reloaded.rev, fields: { blocker: "x".repeat(100_001) } }).success);
     const resolved = await repo.patch(created.id, { baseRev: reloaded.rev, fields: { blocker: "" } });
     assert.ok(!resolved.conflict);
     assert.equal(resolved.task.blocker, "");
     assert.equal(resolved.task.blocked_since, null);
-    assert.ok(resolved.task.observations.some(o => o.markdown.startsWith("Blocker resolved") && o.markdown.includes(archivedDetails)));
+    assert.ok(resolved.task.observations.some(o => o.markdown.startsWith("Blocker resolved") && o.changes?.blocker.before === markdown));
+  });
+}
+
+for (const format of ["markdown", "structured"] as const) {
+  test(`${format}: status limits, freshness and lossless verified observations`, async t=>{
+    const env=await makeBoard(format); t.after(()=>fs.rm(env.root,{recursive:true,force:true}));
+    const repo=makeRepo(env); let task=await repo.read("C01",20); assert.ok(task.valid);
+    assert.equal(task.status_freshness,"unknown");
+    const long="Previous status "+"x".repeat(1000);
+    if(format === "structured") {const file=path.join(env.boardDir,"C01/task.json");const raw=JSON.parse(await fs.readFile(file,"utf8"));raw.frontmatter.status_detail=long;await fs.writeFile(file,JSON.stringify(raw));}
+    else {const file=path.join(env.boardDir,"C01/task.md");await fs.writeFile(file,(await fs.readFile(file,"utf8")).replace('status_detail: ""',`status_detail: "${long}"`));}
+    task=await repo.read("C01",20);assert.ok(task.valid);
+    const unchanged=await repo.patch(task.id,{baseRev:task.rev,fields:{status_detail:long,title:"Renamed"}});assert.ok(!unchanged.conflict);
+    await assert.rejects(repo.patch(task.id,{baseRev:unchanged.task.rev,fields:{status_detail:"x".repeat(601)}}),/600/);
+    await assert.rejects(repo.patch(task.id,{baseRev:unchanged.task.rev,fields:{status_detail:"a\n\nb"}}),/paragraph/);
+    const changed=await repo.patch(task.id,{baseRev:unchanged.task.rev,fields:{status_detail:"  Ready for review  "}});assert.ok(!changed.conflict);
+    assert.equal(changed.task.status_detail,"Ready for review");assert.equal(changed.task.status_freshness,"fresh");
+    assert.equal(changed.task.observations.filter(o=>o.changes?.status_detail?.before === long).length,1);
+    const noOp=await repo.patch(task.id,{baseRev:changed.task.rev,fields:{status_detail:" Ready for review "}});assert.ok(!noOp.conflict);assert.equal(noOp.task.rev,changed.task.rev);
+    await assert.rejects(repo.appendObservation(task.id,{baseRev:changed.task.rev,text:"Claim",author:"codex",verification:"verified",verification_evidence:" "}),/evidence/);
+    const markdown="## Heading\n\n### 2026-01-01T00:00:00Z — fake\nA note with Unicode ✓ and Markdown boundaries.";
+    const appended=await repo.appendObservation(task.id,{baseRev:changed.task.rev,text:markdown,author:"codex",at:"2020-01-01T00:00:00Z",verification:"verified",verification_evidence:"Compared both formats; content matched."});assert.ok(!appended.conflict);
+    assert.equal(appended.task.status_freshness,"newer_notes");
+    const note=appended.task.observations.at(-1)!;assert.equal(note.markdown,markdown);assert.ok(note.id);assert.ok(note.recorded_at);
+    const reloaded=await makeRepo(env).observation(task.id,note.id!);assert.deepEqual(reloaded,note);
+    const fixed=await repo.patch(task.id,{baseRev:appended.task.rev,fields:{status_detail:"Checked today"}});assert.ok(!fixed.conflict);assert.equal(fixed.task.status_freshness,"fresh");
+    const generated=await repo.patch(task.id,{baseRev:fixed.task.rev,fields:{blocker:"Wait"}});assert.ok(!generated.conflict);assert.equal(generated.task.status_freshness,"fresh");
+  });
+  test(`${format}: communications lifecycle, retries, counts and recurring resets`,async t=>{
+    const env=await makeBoard(format);t.after(()=>fs.rm(env.root,{recursive:true,force:true}));const repo=makeRepo(env),workflow=new WorkflowService(repo);
+    let task=await repo.create(CreateRequestSchema.parse({title:"Recurring",category:"Feature",recurring:true,priority:"High",next_action:{text:"Review",owner:null,due_date:"2026-12-31"},qa:"User steps",verification:"Old run evidence"}));
+    const input=CommunicationMutationSchema.parse({baseRev:task.rev,item_id:"retry_1",fields:{to:" Jason ",channel:"Teams",subject:"Review",body:"Full body"}});
+    const draft=await repo.mutateCommunication(task.id,input,true);assert.ok(!draft.conflict);
+    assert.equal(draft.task.communication_counts.draft,1);
+    const retry=await repo.mutateCommunication(task.id,input,true);assert.ok(!retry.conflict);assert.equal(retry.task.rev,draft.task.rev);
+    await assert.rejects(repo.mutateCommunication(task.id,{...input,fields:{...input.fields,subject:"Other"}},true),/different content/);
+    assert.equal((await workflow.listCommunications(CommunicationFilterSchema.parse({awaiting_reply:true}))).items.length,0);
+    const sent=await repo.mutateCommunication(task.id,CommunicationMutationSchema.parse({baseRev:draft.task.rev,item_id:"retry_1",fields:{state:"sent",sent_at:"2026-09-28T09:00:00-06:00",awaiting_reply:true}}),false);assert.ok(!sent.conflict);
+    assert.equal(sent.task.communication_counts.awaiting_reply,1);
+    const waiting=await workflow.listCommunications(CommunicationFilterSchema.parse({awaiting_reply:true,to:"jason"}));assert.equal(waiting.items.length,1);assert.ok(!("body" in waiting.items[0]));
+    assert.equal((await workflow.getCommunication(task.id,"retry_1")).body,"Full body");
+    await assert.rejects(repo.mutateCommunication(task.id,CommunicationMutationSchema.parse({baseRev:sent.task.rev,item_id:"retry_1",fields:{state:"draft",sent_at:null,awaiting_reply:false}}),false),/Sent history/);
+    const replied=await repo.mutateCommunication(task.id,CommunicationMutationSchema.parse({baseRev:sent.task.rev,item_id:"retry_1",fields:{state:"replied",replied_at:"2026-09-28T16:00:00Z",awaiting_reply:false}}),false);assert.ok(!replied.conflict);
+    assert.equal((await workflow.listCommunications(CommunicationFilterSchema.parse({awaiting_reply:true}))).items.length,0);
+    const done=await repo.patch(task.id,{baseRev:replied.task.rev,fields:{status:"Completed"}});assert.ok(!done.conflict);
+    const archived=await repo.setArchived(task.id,true,done.task.rev);assert.ok(!archived.conflict);assert.ok(archived.successor);
+    assert.equal(archived.successor.priority,"High");assert.equal(archived.successor.next_action,null);assert.equal(archived.successor.communication_count,0);assert.equal(archived.successor.verification,"");assert.equal(archived.successor.qa,"User steps");
+  });
+  test(`${format}: changed-since stable pages and full observation lookup`,async t=>{
+    const env=await makeBoard(format);t.after(()=>fs.rm(env.root,{recursive:true,force:true}));const repo=makeRepo(env),workflow=new WorkflowService(repo);
+    let task=await repo.read("C01",20);assert.ok(task.valid);
+    for(let i=0;i<3;i++){const r=await repo.appendObservation(task.id,{baseRev:task.rev,text:`New ${i}`,author:"codex"});assert.ok(!r.conflict);task=r.task;}
+    const q=ChangesFilterSchema.parse({since:"2020-01-01T00:00:00Z",limit:1});const first=await workflow.listChanges(q);assert.ok(first.next_cursor);
+    const later=await repo.appendObservation(task.id,{baseRev:task.rev,text:"Concurrent append",author:"codex"});assert.ok(!later.conflict);
+    const all=[...first.items];let cursor:string|null=first.next_cursor;
+    while(cursor){const page=await workflow.listChanges({...q,cursor});assert.equal(page.until,first.until);all.push(...page.items);cursor=page.next_cursor;}
+    assert.equal(new Set(all.map(i=>i.id)).size,all.length);assert.ok(!all.some(i=>i.excerpt === "Concurrent append"));
+    const item=all.find(i=>i.excerpt === "New 0")!;assert.equal((await repo.observation(item.task_id,item.observation_id!)).markdown,"New 0");
+    await assert.rejects(workflow.listChanges({...q,cursor:first.next_cursor!,project:"Other"}),/filters changed/);
+    await assert.rejects(new WorkflowService(repo).listChanges({...q,cursor:first.next_cursor!}),/expired/);
+  });
+  test(`${format}: cancellation migration rejects stale previews, resumes and rolls back exact bytes`,async t=>{
+    const env=await makeBoard(format);t.after(()=>fs.rm(env.root,{recursive:true,force:true}));const config=new ConfigService(env);
+    await config.update({...config.get(),statuses:[...config.get().statuses,{id:"Depricated",label:"Cancel",color:"#123456",order:7}],board:{hiddenColumns:["Depricated"]}});
+    const repo=makeRepo(env);let task=await repo.read("C01",20);assert.ok(task.valid);
+    const cancelled=await repo.patch(task.id,{baseRev:task.rev,fields:{status:"Depricated"}});assert.ok(!cancelled.conflict);
+    const service=new StatusMigrationService(env,config,repo),input=StatusMigrationSchema.parse({task_id:"C01"});
+    const preview=await service.run(input);assert.ok("preview_hash" in preview);
+    const edit=await repo.patch(task.id,{baseRev:cancelled.task.rev,fields:{title:"Changed since preview"}});assert.ok(!edit.conflict);
+    await assert.rejects(service.run({...input,mode:"apply",preview_hash:preview.preview_hash}),/Preview changed/);
+    const before=await fs.readFile(path.join(env.boardDir,"C01",format === "markdown" ? "task.md" : "task.json"),"utf8");
+    const ready=await service.run(input);assert.ok("preview_hash" in ready);
+    const applied=await service.run({...input,mode:"apply",preview_hash:ready.preview_hash});assert.ok("state" in applied);assert.equal(applied.state,"applied");
+    const reloaded=await repo.read("C01",20);assert.ok(reloaded.valid);assert.equal(reloaded.status,"Cancelled");assert.equal(reloaded.completed,undefined);assert.equal(config.get().statusAliases?.Depricated,"Cancelled");
+    const resumed=await service.run({...input,mode:"resume",operation_id:applied.operation_id});assert.ok("state" in resumed);assert.equal(resumed.state,"applied");
+    const again=await service.run(input);assert.ok("files" in again);assert.deepEqual(again.files,[]);
+    await service.run({...input,mode:"rollback",operation_id:applied.operation_id});
+    assert.equal(await fs.readFile(path.join(env.boardDir,"C01",format === "markdown" ? "task.md" : "task.json"),"utf8"),before);
+  });
+}
+
+test("patch adapters reject ambiguity and unknown keys, preserve clear/omit semantics",()=>{
+  assert.deepEqual(PatchRequestSchema.parse({baseRev:1,summary:"",body:{summaryMarkdown:""},priority:"High"}),{baseRev:1,fields:{priority:"High"},body:{summary:""}});
+  assert.equal(PatchRequestSchema.safeParse({baseRev:1,summary:"a",body:{summary:"b"}}).success,false);
+  assert.equal(PatchRequestSchema.safeParse({baseRev:1,fields:{wat:1}}).success,false);
+  assert.equal(PatchRequestSchema.safeParse({baseRev:1,unknown:"x"}).success,false);
+  assert.equal(CreateRequestSchema.safeParse({title:"Bad date",category:"Feature",next_action:{text:"Do",due_date:"2026-02-30"}}).success,false);
+});
+
+test("cancellation migration preserves canonical settings, excludes invalid files, resumes partial apply and guards rollback", async t => {
+  const env = await makeBoard("structured");
+  t.after(() => fs.rm(env.root, { recursive: true, force: true }));
+  const config = new ConfigService(env);
+  await config.update({ ...config.get(), statuses: [...config.get().statuses,
+    { id: "Depricated", label: "Cancel", color: "#123456", order: 7 },
+    { id: "Cancelled", label: "Cancelled", color: "#abcdef", order: 8 }], board: { hiddenColumns: ["Depricated"] } });
+  const repo = makeRepo(env);
+  const original = await repo.read("C01", 20); assert.ok(original.valid);
+  await repo.patch("C01", { baseRev: original.rev, fields: { status: "Depricated" } });
+  const invalidDir = path.join(env.boardDir, "C02"); await fs.mkdir(invalidDir);
+  await fs.writeFile(path.join(invalidDir, "task.json"), "invalid fixture");
+  const service = new StatusMigrationService(env, config, repo);
+  const input = StatusMigrationSchema.parse({ task_id: "C01" });
+  const preview = await service.run(input); assert.ok("preview_hash" in preview);
+  assert.equal(preview.collision, true); assert.equal(preview.chosen_status.color, "#abcdef");
+  assert.deepEqual(preview.invalid, ["C02"]);
+  await assert.rejects(service.run({ ...input, mode: "apply", preview_hash: preview.preview_hash }), /invalid tasks/);
+  const excluded = { ...input, exclude_invalid: ["C02"] };
+  const ready = await service.run(excluded); assert.ok("preview_hash" in ready);
+  const applied = await service.run({ ...excluded, mode: "apply", preview_hash: ready.preview_hash }); assert.ok("backup" in applied);
+  assert.equal(await fs.readFile(path.join(invalidDir, "task.json"), "utf8"), "invalid fixture");
+  assert.deepEqual(config.get().board?.hiddenColumns, ["Cancelled"]);
+  const journal = JSON.parse(await fs.readFile(applied.backup, "utf8"));
+  // Reconstruct a process interruption after one of the prepared writes.
+  for (const change of journal.changes.slice(1)) {
+    const target = path.join(env.root, change.relative);
+    if (change.before === null) await fs.unlink(target); else await fs.writeFile(target, change.before);
+  }
+  journal.state = "prepared"; await fs.writeFile(applied.backup, JSON.stringify(journal));
+  const resumed = await service.run({ ...excluded, mode: "resume", operation_id: applied.operation_id }); assert.ok("state" in resumed);
+  assert.equal(resumed.state, "applied");
+  const taskPath = path.join(env.boardDir, "C01", "task.json");
+  const migrated = await fs.readFile(taskPath, "utf8");
+  await fs.writeFile(taskPath, migrated + "\n");
+  await assert.rejects(service.run({ ...excluded, mode: "rollback", operation_id: applied.operation_id }), /outside this migration/);
+  assert.equal(config.get().statusAliases?.Depricated, "Cancelled");
+  await fs.writeFile(taskPath, migrated);
+  await service.run({ ...excluded, mode: "rollback", operation_id: applied.operation_id });
+  const restored = await repo.read("C01", 20); assert.ok(restored.valid); assert.equal(restored.status, "Depricated");
+});
+
+test("cancellation migration repairs existing aliases that target the old status", async t => {
+  const env = await makeBoard("structured");
+  t.after(() => fs.rm(env.root, { recursive: true, force: true }));
+  const config = new ConfigService(env);
+  await config.update({ ...config.get(), statuses: [...config.get().statuses,
+    { id: "Depricated", label: "Cancel", color: "#123456", order: 7 }],
+    statusAliases: { Cancelled: "Depricated", Obsolete: "Depricated" } });
+  const repo = makeRepo(env);
+  const task = await repo.read("C01", 20); assert.ok(task.valid);
+  await repo.patch(task.id, { baseRev: task.rev, fields: { status: "Depricated" } });
+  const service = new StatusMigrationService(env, config, repo);
+  const input = StatusMigrationSchema.parse({ task_id: "C01" });
+  const preview = await service.run(input); assert.ok("preview_hash" in preview);
+  const applied = await service.run({ ...input, mode: "apply", preview_hash: preview.preview_hash });
+  assert.ok("operation_id" in applied);
+  assert.deepEqual(config.get().statusAliases, { Obsolete: "Cancelled", Depricated: "Cancelled" });
+  assert.equal(repo.canonicalStatus("Obsolete"), "Cancelled");
+  await service.run({ ...input, mode: "rollback", operation_id: applied.operation_id! });
+  assert.deepEqual(config.get().statusAliases, { Cancelled: "Depricated", Obsolete: "Depricated" });
+});
+
+test("priority removal checks current settings from other writers", async t => {
+  const env = await makeBoard("structured");
+  t.after(() => fs.rm(env.root, { recursive: true, force: true }));
+  const staleConfig = new ConfigService(env);
+  const savedSettings = staleConfig.get();
+  const writer = new ConfigService(env);
+  await writer.update({ ...writer.get(), priorities: [...writer.get().priorities!,
+    { id: "Review", color: "#123456", rank: 1 }] });
+  const repo = makeRepo(env);
+  await repo.create(CreateRequestSchema.parse({ title: "Uses a new priority", category: "Feature", priority: "Review" }));
+  await assert.rejects(staleConfig.update(savedSettings), /Priority Review is used/);
+  assert.ok(new ConfigService(env).get().priorities!.some(p => p.id === "Review"));
+});
+
+for (const format of ["markdown", "structured"] as const) {
+  test(`${format}: direct history edits invalidate freshness until status is reviewed`, async t => {
+    const env = await makeBoard(format);
+    t.after(() => fs.rm(env.root, { recursive: true, force: true }));
+    const repo = makeRepo(env);
+    const initial = await repo.read("C01"); assert.ok(initial.valid);
+    const status = await repo.patch(initial.id, { baseRev: initial.rev, fields: { status_detail: "Checked status" } });
+    assert.ok(!status.conflict); assert.equal(status.task.status_freshness, "fresh");
+    if (format === "markdown") await fs.appendFile(path.join(env.boardDir, "C01/task.md"), "\n### 2020-01-01T00:00:00Z — human\n\nBackdated external note.\n");
+    else await fs.appendFile(path.join(env.boardDir, "C01/observations.jsonl"), JSON.stringify({ id: "obs_external", at: "2020-01-01T00:00:00Z", author: "human", markdown: "Backdated external note." }) + "\n");
+    const external = await repo.read(initial.id); assert.ok(external.valid);
+    assert.equal(external.status_freshness, "unknown");
+    const reviewed = await repo.patch(initial.id, { baseRev: external.rev, fields: { status_detail: "Reviewed external note" } });
+    assert.ok(!reviewed.conflict);
+    const reloaded = await makeRepo(env).read(initial.id); assert.ok(reloaded.valid);
+    assert.equal(reloaded.status_freshness, "fresh");
+  });
+
+  test(`${format}: planning filters preserve ranked dates, closed states, backlog and reopening`, async t => {
+    const env = await makeBoard(format);
+    t.after(() => fs.rm(env.root, { recursive: true, force: true }));
+    const config = new ConfigService(env);
+    await config.update({ ...config.get(), statuses: [...config.get().statuses,
+      { id: "Cancelled", color: "#123456" }], statusAliases: { Depricated: "Cancelled" } });
+    const repo = makeRepo(env), service = new TaskService(repo);
+    const make = (title: string, priority: string, date: string | null, status = "Backlog") =>
+      repo.create(CreateRequestSchema.parse({ title, category: "Feature", priority, status,
+        next_action: { text: "Review", owner: null, due_date: date } }));
+    const urgent = await make("Urgent tomorrow", "Urgent", "2027-01-01");
+    const early = await make("High overdue", "High", "2026-12-31");
+    const high = await make("High tomorrow", "High", "2027-01-01");
+    const undated = await make("High undated", "High", null);
+    const done = await make("Completed tomorrow", "High", "2027-01-01", "Completed");
+    const cancelled = await make("Cancelled tomorrow", "High", "2027-01-01", "Depricated");
+    const archived = await make("Archived tomorrow", "High", "2027-01-01");
+    await repo.setArchived(archived.id, true, archived.rev);
+    const list = async (filter: object) => (await service.list(TaskFilterSchema.parse(filter))).map(t => t.id);
+    assert.deepEqual(await list({ has_next_action: true, sort: "priority" }), [urgent.id, early.id, high.id, undated.id]);
+    const tomorrow = { has_next_action: true, sort: "priority", next_action_date_from: "2027-01-01", next_action_date_to: "2027-01-01" };
+    assert.deepEqual(await list(tomorrow), [urgent.id, high.id]);
+    assert.deepEqual(await list({ ...tomorrow, include_closed: true }), [urgent.id, high.id, done.id, cancelled.id]);
+    assert.deepEqual(await list({ action_undated: true }), [undated.id]);
+    assert.deepEqual(await list({ next_action_date_to: "2026-12-31" }), [early.id]);
+    assert.deepEqual(await list({ status: ["Depricated"] }), [cancelled.id]);
+    assert.deepEqual(await list({ ...tomorrow, next_action_owner: "Francis" }), []);
+    assert.deepEqual(await list({ ...tomorrow, next_action_owner: "" }), [urgent.id, high.id]);
+    await repo.patch(done.id, { baseRev: done.rev, fields: { status: "In progress" } });
+    assert.deepEqual(await list(tomorrow), [urgent.id, high.id, done.id]);
+    const cleared = await repo.patch(high.id, { baseRev: high.rev, fields: { next_action: null } });
+    assert.ok(!cleared.conflict);
+    assert.equal(cleared.task.observations.at(-1)?.changes?.next_action.after, null);
+    assert.deepEqual(await list(tomorrow), [urgent.id, done.id]);
+    await assert.rejects(config.update({ ...config.get(), priorities: config.get().priorities!.filter(p => p.id !== "High") }), /is used/);
+    await assert.rejects(config.update({ ...config.get(), priorities: config.get().priorities!.filter(p => p.id !== "Normal") }), /Normal default/);
+  });
+
+  test(`${format}: exports and conversion retain evidence, planning and communication facts`, async t => {
+    const env = await makeBoard(format);
+    t.after(() => fs.rm(env.root, { recursive: true, force: true }));
+    const repo = makeRepo(env);
+    const created = await repo.create(CreateRequestSchema.parse({ title: "Portable workflow", category: "Feature",
+      priority: "High", next_action: { text: "Review results", owner: "Francis", due_date: "2027-01-01" },
+      qa: "User reproduction steps", verification: "Executed checks", blocker: "First blocker\nSecond line" }));
+    const noted = await repo.appendObservation(created.id, { baseRev: created.rev, author: "codex", text: "A verified result",
+      verification: "verified", verification_evidence: "Compared fixture contents; matched." });
+    assert.ok(!noted.conflict);
+    const message = await repo.mutateCommunication(created.id, CommunicationMutationSchema.parse({ baseRev: noted.task.rev,
+      item_id: "portable_message", fields: { to: "Jason", channel: "Teams", subject: "Draft subject", body: "Draft body" } }), true);
+    assert.ok(!message.conflict);
+    const store = new TaskFileStore(env.boardDir, env.taskStore, new RecentWrites());
+    const parsed = parseTaskFile(await store.renderMarkdown(created.id)); assert.ok(parsed.ok);
+    const converted = structuredFromLegacy(parsed);
+    assert.equal(converted.task.frontmatter.priority, "High");
+    assert.equal(converted.task.frontmatter.next_action?.due_date, "2027-01-01");
+    assert.equal(converted.task.frontmatter.communications[0].body, "Draft body");
+    const note = converted.observations.find(o => o.markdown === "A verified result")!;
+    assert.equal(note.id, noted.task.observations.at(-1)?.id);
+    assert.equal(note.verification_evidence, "Compared fixture contents; matched.");
+    assert.equal(note.verification, "verified");
+    const output = await new ExportService(env, repo).buildAndSave({ includeScope: true, includeObservations: true, groupBy: "none" });
+    for (const text of ["User reproduction steps", "Executed checks", "Review results", "Draft body", "Verification: verified",
+      "Compared fixture contents; matched.", "First blocker", "Second line"]) assert.ok(output.markdown.includes(text), text);
   });
 }

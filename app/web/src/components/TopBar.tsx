@@ -24,6 +24,8 @@ import { useUiStore } from "@/store/ui";
 import { ExportDialog } from "./ExportDialog";
 import { NewTaskDialog } from "./NewTaskDialog";
 import { AddProjectDialog } from "./AddProjectDialog";
+import { FilterBar } from "./FilterBar";
+import { ShareDialog } from "./ShareDialog";
 
 const NAV = [
   { to: "/", label: "Board", icon: LayoutGrid, end: true },
@@ -105,7 +107,7 @@ export function TopBar() {
         <span className="text-lg font-bold tracking-tight">AiDailyTasks</span>
       </div>
 
-      <nav className="flex items-center gap-1">
+      <nav className="flex max-w-full flex-wrap items-center gap-1">
         {NAV.filter((item) => !(config?.navigation?.hiddenTabs ?? []).includes(item.to)).map(({ to, label, icon: Icon, end }) => (
           <NavLink
             key={to}
@@ -144,6 +146,7 @@ export function TopBar() {
           />
         </div>
         {/* Search is intentionally collapsed by default so the board toolbar has room for actions. */}
+        <FilterBar />
         {false && <label className="relative">
           <Search
             size={14}
@@ -189,6 +192,7 @@ export function TopBar() {
           </button>
         </div>
 
+        <ShareDialog />
         <button
           type="button"
           onClick={() => setExportOpen(true)}

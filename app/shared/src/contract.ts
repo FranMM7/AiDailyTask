@@ -13,6 +13,7 @@
  * labels ("Low–Med", "Med–High"), matching the source audit. Keep it exact.
  */
 import { z } from "zod";
+import { NextActionSchema, CommunicationSchema, ObservationMetadataSchema, VerificationSchema, CalendarDateSchema, type Freshness } from "./workflow";
 
 // ── Canonical vocabularies ─────────────────────────────────────────────────
 export const STATUSES = ["Backlog", "Not started", "Scoped", "In progress", "Completed"] as const;
@@ -96,6 +97,13 @@ export const FrontmatterSchema = z.object({
   risk: z.string().trim().min(1),
   status: z.string().trim().min(1),
   status_detail: z.string().default(""),
+  status_detail_updated_at: z.string().nullable().default(null),
+  status_detail_fingerprint: z.string().optional(),
+    observation_fingerprint: z.string().optional(),
+  latest_note_at: z.string().nullable().default(null),
+  priority: z.string().default("Normal"),
+  next_action: NextActionSchema.nullable().default(null),
+  communications: z.array(CommunicationSchema).default([]),
   blocker: z.string().trim().max(100_000).default(""),
   blocked_since: z.string().datetime().nullable().default(null),
   created: z.string().optional(),
@@ -132,6 +140,8 @@ export const EditableFieldsSchema = FrontmatterSchema.pick({
   risk: true,
   status: true,
   status_detail: true,
+  priority: true,
+  next_action: true,
   blocker: true,
   completed: true,
   tags: true,
@@ -143,11 +153,11 @@ export const EditableFieldsSchema = FrontmatterSchema.pick({
   parent: true,
   children: true,
   resources: true,
-}).partial();
+}).partial().strict();
 export type EditableFields = z.infer<typeof EditableFieldsSchema>;
 
 // ── Sub-objects ─────────────────────────────────────────────────────────────
-export interface Observation {
+export interface Observation extends z.infer<typeof ObservationMetadataSchema> {
   /** ISO-8601 UTC timestamp, e.g. 2026-07-07T15:17:00Z */
   at: string;
   /** "human" | "claude" | free-form */
@@ -175,6 +185,8 @@ export interface Attachment {
 
 // ── API response DTOs ────────────────────────────────────────────────────────
 export interface TaskSummary extends Frontmatter {
+  status_freshness: Freshness;
+  communication_counts: { draft: number; awaiting_reply: number };
   /** concurrency token = file mtimeMs */
   rev: number;
   valid: true;
@@ -186,6 +198,12 @@ export interface TaskSummary extends Frontmatter {
 }
 
 export interface TaskDetail extends Frontmatter {
+  communication_page?: import("./workflow").CommunicationPage;
+  communication_counts: { draft: number; awaiting_reply: number };
+  status_freshness: Freshness;
+  summary: string; scope: string; qa: string; verification: string;
+  verificationMarkdown: string;
+  communication_count: number;
   rev: number;
   valid: true;
   summaryMarkdown: string;
@@ -219,7 +237,7 @@ export type TaskSummaryOrInvalid = TaskSummary | InvalidTask;
 export type TaskDetailOrInvalid = TaskDetail | InvalidTask;
 
 // ── API request DTOs ─────────────────────────────────────────────────────────
-export const PatchRequestSchema = z.object({
+export const PatchEnvelopeSchema = z.object({
   baseRev: z.number(),
   fields: EditableFieldsSchema.optional(),
   body: z
@@ -228,10 +246,12 @@ export const PatchRequestSchema = z.object({
       scope: z.string().optional(),
       /** "## QA" section: how to test this task. Empty string clears the section's content. */
       qa: z.string().optional(),
+      verification: z.string().optional(),
     })
     .optional(),
 });
-export type PatchRequest = z.infer<typeof PatchRequestSchema>;
+export type PatchRequest = z.infer<typeof PatchEnvelopeSchema>;
+export const PatchRequestSchema = z.unknown().transform(normalizePatch).pipe(PatchEnvelopeSchema);
 
 export const CreateRequestSchema = z.object({
   /** optional explicit id ("C99"); when omitted the server allocates max+1 */
@@ -243,6 +263,8 @@ export const CreateRequestSchema = z.object({
   risk: z.string().trim().min(1).default("Low"),
   status: z.string().trim().min(1).default("Not started"),
   status_detail: z.string().default(""),
+  priority: z.string().default("Normal"),
+  next_action: NextActionSchema.nullable().default(null),
   blocker: z.string().trim().max(100_000).optional(),
   tags: z.array(z.string()).default([]),
   skills: z.array(z.string()).default([]),
@@ -255,6 +277,7 @@ export const CreateRequestSchema = z.object({
   summary: z.string().default(""),
   scope: z.string().default(""),
   qa: z.string().default(""),
+  verification: z.string().default(""),
 });
 export type CreateRequest = z.infer<typeof CreateRequestSchema>;
 
@@ -263,13 +286,22 @@ export const ObservationRequestSchema = z.object({
   author: z.string().default("human"),
   text: z.string().min(1),
   /** optional ISO timestamp; server stamps now() if omitted */
-  at: z.string().optional(),
+  at: z.string().datetime({offset:true}).optional(),
+  verification: VerificationSchema.optional(),
+  verification_evidence: z.string().max(100_000).optional(),
 });
 export type ObservationRequest = z.infer<typeof ObservationRequestSchema>;
 
 /** Query params for GET /tasks. Arrays may arrive as repeated query keys or CSV. */
 export const TaskFilterSchema = z.object({
   project: z.string().optional(),
+  priority: z.array(z.string()).optional(),
+  next_action_owner: z.string().optional(),
+  next_action_date_from: CalendarDateSchema.optional(),
+  next_action_date_to: CalendarDateSchema.optional(),
+  has_next_action: z.boolean().optional(),
+  action_undated: z.boolean().optional(),
+  include_closed: z.boolean().optional(),
   status: z.array(z.string().min(1)).optional(),
   category: z.array(z.string().min(1)).optional(),
   severity: z.array(z.string().min(1)).optional(),
@@ -282,7 +314,7 @@ export const TaskFilterSchema = z.object({
   /** Archived visibility: "exclude" (default, hide archived), "only" (Archive view), "include" (both). */
   archived: z.enum(["exclude", "only", "include"]).default("exclude"),
   sort: z
-    .enum(["id", "title", "status", "severity", "risk", "category", "updated", "created", "completed", "project"])
+    .enum(["id", "priority", "title", "status", "severity", "risk", "category", "updated", "created", "completed", "project"])
     .default("id"),
   order: z.enum(["asc", "desc"]).default("asc"),
 });
@@ -517,6 +549,8 @@ export interface BoardConfig {
   idPrefix: string;
   idPad: number;
   statuses: EnumDef[];
+  statusAliases?: Record<string, string>;
+  priorities?: EnumDef[];
   categories: EnumDef[];
   severities: EnumDef[];
   risks: EnumDef[];
@@ -577,4 +611,31 @@ export function normalizeId(id: string, prefix = "C", pad = 2): string {
 export function blockerExcerpt(markdown: string, max = 240): string {
   const plain = markdown.replace(/[#*_`>]/g, "").replace(/\s+/g, " ").trim();
   return plain.length > max ? plain.slice(0, max).trimEnd() + "..." : plain;
+}
+
+function normalizePatch(input: unknown, ctx: z.RefinementCtx) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) { ctx.addIssue({code:"custom",message:"Expected a task patch"}); return z.NEVER; }
+  const raw = input as Record<string, unknown>;
+  const fields: Record<string, unknown> = {};
+  const body: Record<string, unknown> = {};
+  const merge = (target: Record<string, unknown>, key: string, value: unknown) => {
+    if (key in target && JSON.stringify(target[key]) !== JSON.stringify(value)) ctx.addIssue({code:"custom",path:[key],message:"Conflicting aliases"});
+    target[key] = value;
+  };
+  const contentKeys = ["summary", "scope", "qa", "verification"];
+  const accept = (key: string, value: unknown, context: "flat" | "fields" | "body") => {
+    const canonical = key.endsWith("Markdown") ? key.slice(0,-8) : key;
+    if (context !== "fields" && contentKeys.includes(canonical)) merge(body,canonical,value);
+    else if (context !== "body" && key in EditableFieldsSchema.shape) merge(fields,key,value);
+    else ctx.addIssue({code:"custom",path:[key],message:"Unknown task field"});
+  };
+  for (const [key,value] of Object.entries(raw)) {
+    if (key === "baseRev") continue;
+    if (key === "fields" || key === "body") {
+      if (value === undefined) continue;
+      if (!value || typeof value !== "object" || Array.isArray(value)) {ctx.addIssue({code:"custom",path:[key],message:"Expected an object"});continue;}
+      for (const [k,v] of Object.entries(value)) accept(k,v,key);
+    } else accept(key,value,"flat");
+  }
+  return {baseRev:raw.baseRev,fields,body};
 }

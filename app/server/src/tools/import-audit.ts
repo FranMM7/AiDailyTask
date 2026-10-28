@@ -258,7 +258,7 @@ async function main(): Promise<void> {
       risk: t.risk,
       status: t.status,
       status_detail: t.statusDetail,
-      blocker: "",
+      blocker: "", status_detail_updated_at: null, latest_note_at: null, priority: "Normal", next_action: null, communications: [],
       blocked_since: null,
       ...(t.created ? { created: t.created } : {}),
       ...(t.updated ? { updated: t.updated } : {}),

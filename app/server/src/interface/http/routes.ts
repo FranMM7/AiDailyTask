@@ -1,3 +1,6 @@
+import { StatusMigrationSchema, type StatusMigrationService } from "../../application/statusMigration";
+import type { WorkflowService } from "../../application/workflow";
+import { ChangesFilterSchema, CommunicationFilterSchema, CommunicationMutationSchema } from "@AiDailyTasks/shared";
 /**
  * REST route registration. Validates params/query/bodies against the shared zod
  * schemas, maps domain conflicts to 409 (ConflictResponse) and other errors to
@@ -32,6 +35,8 @@ import type { ProjectDocumentationService } from "../../application/projectDocum
 import { NotFoundError, ValidationError, PayloadTooLargeError } from "../../errors";
 
 export interface Services {
+  workflow: WorkflowService;
+  statusMigration: StatusMigrationService;
   storageInfo: () => Record<string, unknown>;
   config: ConfigService;
   projects: ProjectsService;
@@ -62,6 +67,7 @@ function sendError(reply: FastifyReply, err: unknown): void {
     reply.code(413).send(errorEnvelope("payload_too_large", err.message));
     return;
   }
+  if (err instanceof z.ZodError) { reply.code(400).send(errorEnvelope("validation_error", err.message)); return; }
   const anyErr = err as { code?: string; message?: string };
   if (anyErr?.code === "FST_REQ_FILE_TOO_LARGE" || anyErr?.code === "FST_FILES_LIMIT") {
     reply.code(413).send(errorEnvelope("payload_too_large", anyErr.message ?? "Upload too large"));
@@ -79,6 +85,13 @@ function toArray(value: unknown): string[] | undefined {
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
   return out.length > 0 ? out : undefined;
+}
+
+function queryBoolean(value: unknown): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  throw new ValidationError("Boolean query values must be true or false");
 }
 
 const IdParam = z.object({ id: z.string().regex(ID_PATTERN) });
@@ -209,12 +222,56 @@ export function registerRoutes(app: FastifyInstance, services: Services): void {
     }
   });
 
+  app.post("/api/migrations/status-alias", async(req,reply)=>{
+    try {reply.send(await services.statusMigration.run(StatusMigrationSchema.parse(req.body)));}
+    catch(err){sendError(reply,err);}
+  });
+  app.get("/api/tasks/:id/communications", async(req,reply)=>{
+    try {const {id}=IdParam.parse(req.params);const q=req.query as Record<string,unknown>;reply.send(await services.workflow.listCommunications(CommunicationFilterSchema.parse({...q,task_id:id,limit:q.limit === undefined ? undefined : Number(q.limit)})));}
+    catch(err){sendError(reply,err);}
+  });
+  app.get("/api/changes", async (req,reply) => {
+    try {
+      const q=req.query as Record<string,unknown>;
+      reply.send(await services.workflow.listChanges(ChangesFilterSchema.parse({...q,limit:q.limit === undefined ? undefined : Number(q.limit)})));
+    } catch(err) { sendError(reply,err); }
+  });
+  app.get("/api/communications", async (req,reply) => {
+    try {
+      const q=req.query as Record<string,unknown>;
+      reply.send(await services.workflow.listCommunications(CommunicationFilterSchema.parse({...q,limit:q.limit === undefined ? undefined : Number(q.limit),awaiting_reply:queryBoolean(q.awaiting_reply)})));
+    } catch(err) { sendError(reply,err); }
+  });
+  app.get("/api/tasks/:id/observations/:observationId", async (req,reply) => {
+    try {
+      const {id}=IdParam.parse(req.params);
+      reply.send({observation:await services.tasks.observation(id,(req.params as {observationId:string}).observationId)});
+    } catch(err) { sendError(reply,err); }
+  });
+  app.get("/api/tasks/:id/communications/:itemId", async (req,reply) => {
+    try {
+      const {id}=IdParam.parse(req.params);
+      reply.send(await services.workflow.getCommunication(id,(req.params as {itemId:string}).itemId));
+    } catch(err) { sendError(reply,err); }
+  });
+  for (const create of [true,false]) app.route({method:create ? "POST" : "PATCH",url:"/api/tasks/:id/communications",handler:async(req,reply)=>{
+    try {
+      const {id}=IdParam.parse(req.params);
+      const res=await services.tasks.communication(id,CommunicationMutationSchema.parse(req.body),create);
+      if(res.conflict) { reply.code(409).send({...res,message:"Re-read the task and retry with its current rev."}); return; }
+      reply.send({task:res.task});
+    } catch(err) { sendError(reply,err); }
+  }});
+
   // ── List tasks ───────────────────────────────────────────────────────────
   app.get("/api/tasks", async (req: FastifyRequest, reply) => {
     try {
       const q = req.query as Record<string, unknown>;
       const candidate = {
         project: typeof q.project === "string" ? q.project : undefined,
+        priority: toArray(q.priority),
+        next_action_owner: q.next_action_owner, next_action_date_from: q.next_action_date_from, next_action_date_to: q.next_action_date_to,
+        has_next_action: queryBoolean(q.has_next_action), action_undated: queryBoolean(q.action_undated), include_closed: queryBoolean(q.include_closed),
         status: toArray(q.status),
         category: toArray(q.category),
         severity: toArray(q.severity),
@@ -282,7 +339,7 @@ export function registerRoutes(app: FastifyInstance, services: Services): void {
       const result = await services.tasks.patch(id, parsed.data);
       if (result.conflict) {
         const body: ConflictResponse = { conflict: true, current: result.current };
-        reply.code(409).send(body);
+        reply.code(409).send({...body, message:"Re-read the task and retry with its current rev."});
         return;
       }
       reply.code(200).send({ task: result.task });
@@ -303,7 +360,7 @@ export function registerRoutes(app: FastifyInstance, services: Services): void {
       const result = await services.tasks.addObservation(id, parsed.data);
       if (result.conflict) {
         const body: ConflictResponse = { conflict: true, current: result.current };
-        reply.code(409).send(body);
+        reply.code(409).send({...body, message:"Re-read the task and retry with its current rev."});
         return;
       }
       reply.code(200).send({ task: result.task });
@@ -324,7 +381,7 @@ export function registerRoutes(app: FastifyInstance, services: Services): void {
       const result = await services.tasks.archive(id, parsed.data.baseRev);
       if (result.conflict) {
         const body: ConflictResponse = { conflict: true, current: result.current };
-        reply.code(409).send(body);
+        reply.code(409).send({...body, message:"Re-read the task and retry with its current rev."});
         return;
       }
       reply.code(200).send({
@@ -347,7 +404,7 @@ export function registerRoutes(app: FastifyInstance, services: Services): void {
       const result = await services.tasks.unarchive(id, parsed.data.baseRev);
       if (result.conflict) {
         const body: ConflictResponse = { conflict: true, current: result.current };
-        reply.code(409).send(body);
+        reply.code(409).send({...body, message:"Re-read the task and retry with its current rev."});
         return;
       }
       reply.code(200).send({ task: result.task });

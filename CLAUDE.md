@@ -173,3 +173,32 @@ reconnect it manually.
 - `npm run mcp` — run the board as an **MCP server over stdio** (for a local agent). The HTTP server also exposes MCP at **http://localhost:4317/mcp** (Streamable HTTP). Tools cover task CRUD, observations, attachments, project metadata/documentation, and graphs. See the README's "Connect any AI agent (MCP)" section.
 
 The `board/` folder is also a valid Obsidian vault (frontmatter + `[[C26]]` wiki-links) if you want to open it there.
+
+
+## Daily workflow and verification
+
+Read `status_freshness` and current blockers before resuming. Keep `status_detail` to one paragraph
+of at most 600 characters; replacements preserve full prior text in system history. Use
+`list_changes` with timezone-qualified boundaries and follow every `next_cursor` for activity
+summaries. Retrieve full observations by stable `observation_id` when excerpts are truncated;
+respect legacy/history-unavailable coverage and distinguish current from historical context.
+
+Classify new findings as verified/unverified/assumption. Verified notes require explicit evidence
+of the check, result and limits. Existing unclassified notes stay unclassified. User test steps
+belong in `qa` (User test script); actual results belong in observations and `verification`
+(Verification evidence). Writing evidence does not imply completion.
+
+Use `priority` for work ordering and `next_action` for an explicit action, owner and calendar due
+date. Communication tools record local facts; drafts are not sent, and only sent items marked
+awaiting_reply mean waiting on someone. No communication record authorizes an external send.
+Recurring successors retain priority/user steps and clear actions, communications and past results.
+
+Canonical HTTP/MCP content names are summary/scope/qa/verification; HTTP Markdown aliases remain
+compatible. HTTP PATCH requires baseRev; MCP accepts omission for compatibility, but agents should
+supply the read revision. A conflict requires a reread and review, never blind overwrite. MCP
+initialization remains stateful: reinitialize after 404, reconnect the host for stale tools when
+health is good. Source-watch restarts invalidate sessions.
+
+Use the preview/hash/apply migration flow for cancellation aliases; journals under task attachments
+support resume/rollback with revision guards. Direct file edits bypass this lifecycle and must not
+invent status timestamps or observation classifications.

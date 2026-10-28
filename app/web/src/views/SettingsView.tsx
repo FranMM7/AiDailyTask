@@ -1,3 +1,4 @@
+import { StatusMigrationPanel } from "@/components/StatusMigrationPanel";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Eye, EyeOff, Pencil, Plus, RotateCcw, Save, Trash2, X } from "lucide-react";
 import { orderedDefs, type BoardConfig, type EnumDef } from "@AiDailyTasks/shared";
@@ -260,6 +261,7 @@ export function SettingsView() {
           </div>
         </header>
 
+        <StatusMigrationPanel />
         <Section title="Board data location" description="Keep your board on another drive. The default location is this application's repository.">
           <p className="text-sm">Stop the server and local agent connections, then copy board, exports, graphs, project-docs, board.config.json and projects.json into your chosen folder. Keep the originals until you have verified the copy.</p>
           <p className="mt-2 text-sm">Create <code>storage.local.json</code> in the application repository with your destination, then restart the app and reconnect agents:</p>
@@ -312,6 +314,7 @@ export function SettingsView() {
 
         <div className="grid gap-4 lg:grid-cols-2">
           <VocabularyEditor title="Statuses" description="Backlog and Completed ids are protected because lifecycle behavior depends on them." singular="status" values={draft.statuses} protectedIds={PROTECTED_STATUSES} onChange={(statuses) => patch({ statuses })} />
+          <VocabularyEditor title="Priorities" description="Work ordering, separate from severity. Normal is the default; replace in-use priorities on tasks before removing them." singular="priority" values={draft.priorities ?? []} protectedIds={new Set(["Normal"])} onChange={priorities=>patch({priorities:priorities.map((p,rank)=>({...p,rank}))})} />
           <VocabularyEditor title="Categories" description="Organize work by its primary kind." singular="category" values={draft.categories} onChange={(categories) => patch({ categories })} />
           <VocabularyEditor title="Severities" description="Ordered impact levels; order here determines rank." singular="severity" values={draft.severities} onChange={(severities) => patch({ severities })} />
           <VocabularyEditor title="Risks" description="Ordered delivery-risk levels; order here determines rank." singular="risk" values={draft.risks} onChange={(risks) => patch({ risks })} />

@@ -2,6 +2,7 @@ import type { TaskFilter } from "@AiDailyTasks/shared";
 
 const SORT_VALUES = [
   "id",
+  "priority",
   "title",
   "status",
   "severity",
@@ -45,6 +46,13 @@ export function readFilter(sp: URLSearchParams): TaskFilter {
   const dateTo = sp.get("dateTo") || undefined;
 
   return {
+    priority:sp.getAll("priority").filter(Boolean),
+    next_action_owner:sp.get("next_action_owner") ?? undefined,
+    next_action_date_from:sp.get("next_action_date_from") || undefined,
+    next_action_date_to:sp.get("next_action_date_to") || undefined,
+    has_next_action:sp.has("has_next_action") ? sp.get("has_next_action") === "true" : undefined,
+    action_undated:sp.get("action_undated") === "true" || undefined,
+    include_closed:sp.get("include_closed") === "true" || undefined,
     project: project && project !== "All" ? project : undefined,
     status: status.length ? status : undefined,
     category: category.length ? category : undefined,

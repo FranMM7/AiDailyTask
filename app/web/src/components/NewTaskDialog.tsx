@@ -75,7 +75,7 @@ export function NewTaskDialog({
       severity,
       risk,
       status,
-      status_detail: "",
+      status_detail: "", priority: "Normal", next_action: null, verification: "",
       tags: [],
       skills: [],
       recurring,

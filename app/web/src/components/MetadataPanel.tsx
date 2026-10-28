@@ -1,3 +1,4 @@
+import { FreshnessLabel } from "./WorkflowPanels";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Archive, RotateCcw, X } from "lucide-react";
 import {
@@ -23,6 +24,10 @@ interface FormState {
   risk: Level;
   status: Status;
   status_detail: string;
+  priority: string;
+  action_text: string;
+  action_owner: string;
+  action_date: string;
   tags: string[];
   skills: string[];
   recurring: boolean;
@@ -41,6 +46,7 @@ function toForm(task: TaskDetail): FormState {
     risk: task.risk,
     status: task.status,
     status_detail: task.status_detail ?? "",
+    priority: task.priority, action_text: task.next_action?.text ?? "", action_owner: task.next_action?.owner ?? "", action_date: task.next_action?.due_date ?? "",
     tags: [...task.tags],
     skills: [...task.skills],
     recurring: task.recurring,
@@ -119,10 +125,11 @@ export function MetadataPanel({ task }: { task: TaskDetail }) {
 
   const initial = useMemo(() => toForm(task), [task]);
   const [form, setForm] = useState<FormState>(initial);
+  const [baseRev,setBaseRev]=useState(task.rev);
 
   // reset local edits whenever the task changes on disk (rev bump)
   useEffect(() => {
-    setForm(toForm(task));
+    if (JSON.stringify(form) === JSON.stringify(initial)) {setForm(toForm(task));setBaseRev(task.rev);}
   }, [task.rev, task.id]);
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
@@ -147,6 +154,7 @@ export function MetadataPanel({ task }: { task: TaskDetail }) {
       risk: form.risk,
       status: form.status,
       status_detail: form.status_detail,
+      priority: form.priority, next_action: form.action_text.trim() ? {text:form.action_text,owner:form.action_owner.trim() || null,due_date:form.action_date || null} : null,
       tags: form.tags,
       skills: form.skills,
       recurring: form.recurring,
@@ -156,15 +164,16 @@ export function MetadataPanel({ task }: { task: TaskDetail }) {
       parent: form.parent.trim() ? normalizeId(form.parent.trim()) : null,
     };
     patch.mutate(
-      { id: task.id, body: { baseRev: task.rev, fields } },
+      { id: task.id, body: { baseRev, fields } },
       {
-        onSuccess: () => toast("Saved", "success"),
+        onSuccess: ({task:saved}) => {setForm(toForm(saved));setBaseRev(saved.rev);toast("Saved", "success");},
       },
     );
   };
 
   return (
     <div className="space-y-3">
+      {baseRev !== task.rev && <div className="text-xs text-amber-700"><p>The task changed. Your edits are retained.</p><details><summary>Review current values</summary><pre className="whitespace-pre-wrap">{JSON.stringify(initial,null,2)}</pre></details><button type="button" className="underline" onClick={()=>setBaseRev(task.rev)}>Use reviewed revision for this draft</button></div>}
       <Field label="Title">
         <input value={form.title} onChange={(e) => set("title", e.target.value)} className={inputCls} />
       </Field>
@@ -245,6 +254,7 @@ export function MetadataPanel({ task }: { task: TaskDetail }) {
         </Field>
       </div>
 
+      <FreshnessLabel freshness={task.status_freshness} />
       <Field label="Status detail">
         <input
           value={form.status_detail}
@@ -254,6 +264,11 @@ export function MetadataPanel({ task }: { task: TaskDetail }) {
         />
       </Field>
 
+      <p className="text-xs text-slate-500">{form.status_detail.trim().length}/600 characters. Use one paragraph for the current position; put history in observations. Existing long text can be kept unchanged.</p>
+      <Field label="Priority"><select value={form.priority} onChange={e=>set("priority",e.target.value)} className={selectCls}>{config?.priorities?.map(p=><option key={p.id}>{p.id}</option>)}</select></Field>
+      <Field label="Next action"><textarea maxLength={600} className={inputCls} value={form.action_text} onChange={e=>set("action_text",e.target.value)} placeholder="What happens next? Clear to remove the action." /></Field>
+      <Field label="Action owner"><input maxLength={120} className={inputCls} value={form.action_owner} onChange={e=>set("action_owner",e.target.value)} placeholder="Unassigned" /></Field>
+      <Field label="Action due date"><input type="date" className={inputCls} value={form.action_date} onChange={e=>set("action_date",e.target.value)} /></Field>
       <Field label="Tags">
         <TagEditor tags={form.tags} onChange={(t) => set("tags", t)} />
       </Field>
@@ -339,7 +354,7 @@ export function MetadataPanel({ task }: { task: TaskDetail }) {
         {dirty && (
           <button
             type="button"
-            onClick={() => setForm(toForm(task))}
+            onClick={() => {setForm(toForm(task));setBaseRev(task.rev);}}
             className="rounded-md px-3 py-1.5 text-sm text-slate-500 hover:text-slate-900 dark:hover:text-white"
           >
             Reset

@@ -74,7 +74,7 @@ async function parseBody(res: Response): Promise<unknown> {
   return res.text().catch(() => undefined);
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, init);
   if (!res.ok) {
     const body = await parseBody(res);
@@ -86,6 +86,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 function buildTaskQuery(filter: TaskFilter): string {
   const p = new URLSearchParams();
+  filter.priority?.forEach(v=>p.append("priority",v));
+  for (const key of ["next_action_owner","next_action_date_from","next_action_date_to","has_next_action","action_undated","include_closed"] as const) if(filter[key] !== undefined) p.set(key,String(filter[key]));
   if (filter.project) p.set("project", filter.project);
   filter.status?.forEach((s) => p.append("status", s));
   filter.category?.forEach((c) => p.append("category", c));

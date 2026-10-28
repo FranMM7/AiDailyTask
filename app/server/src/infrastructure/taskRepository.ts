@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import { newObservationId } from "../domain/structuredTask";
+import { StorageGate } from "./storageGate";
+import { CommunicationSchema, CommunicationFieldsSchema, type CommunicationMutation, type Communication, statusFreshness } from "@AiDailyTasks/shared";
 /**
  * Task repository over board/. Handles reads, listing, create/patch/observation
  * with optimistic concurrency and atomic writes. Per-id + allocation mutexes
@@ -51,39 +55,6 @@ const ID_DIR_RE = /^C\d+$/;
 /** Matches the default limit on GET /api/tasks/:id so both paths agree. */
 const DEFAULT_OBSERVATION_PAGE = 20;
 
-/** Scalar frontmatter fields whose manual (web-UI) changes get logged to Observations. */
-const TRACKED_FIELDS: Array<[keyof Frontmatter, string]> = [
-  ["status", "status"],
-  ["status_detail", "status detail"],
-  ["severity", "severity"],
-  ["risk", "risk"],
-  ["category", "category"],
-  ["project", "project"],
-  ["title", "title"],
-  ["recurring", "recurring"],
-];
-
-/** Quote embedded Markdown so headings cannot become legacy task/observation boundaries. */
-function blockerHistory(markdown: string): string {
-  return markdown.split(/\r?\n/).map((line) => `> ${line}`).join("\n");
-}
-
-function fmtVal(v: unknown): string {
-  const s = v == null ? "" : String(v);
-  return s.trim() === "" ? "(none)" : s;
-}
-
-/** Human-readable list of changed tracked fields, e.g. ["status: In progress → Completed"]. */
-function describeFieldChanges(before: Frontmatter, after: Frontmatter): string[] {
-  const out: string[] = [];
-  for (const [key, label] of TRACKED_FIELDS) {
-    if (String(before[key] ?? "") !== String(after[key] ?? "")) {
-      out.push(`${label}: ${fmtVal(before[key])} → ${fmtVal(after[key])}`);
-    }
-  }
-  return out;
-}
-
 export interface PatchOutcome {
   conflict: false;
   task: TaskDetail;
@@ -101,6 +72,7 @@ export class FsTaskRepository {
   private locks = new Map<string, Mutex>();
   private allocationLock = new Mutex();
   private readonly store: TaskFileStore;
+  readonly gate: StorageGate;
 
   constructor(
     private readonly env: Env,
@@ -110,17 +82,18 @@ export class FsTaskRepository {
     private readonly bus: EventBus,
     recentWrites: RecentWrites,
   ) {
+    this.gate = config.gate;
     this.store = new TaskFileStore(env.boardDir, env.taskStore, recentWrites);
   }
 
-  private lockFor(id: string): Mutex {
+  private lockFor(id: string) {
     const key = normalizeId(id);
     let m = this.locks.get(key);
     if (!m) {
       m = new Mutex();
       this.locks.set(key, m);
     }
-    return m;
+    return { runExclusive: <T>(fn: () => Promise<T>) => this.gate.run(() => m!.runExclusive(fn)) };
   }
 
   private taskDir(id: string): string {
@@ -140,10 +113,40 @@ export class FsTaskRepository {
       throw err;
     }
     if (!doc.ok) return this.invalid(id, doc.rev, doc.error, doc.rawFrontmatter, doc.rawBody);
-    return { ...doc, frontmatter: { ...doc.frontmatter, id: normalizeId(id) } };
+    return { ...doc, frontmatter: this.normalizeFrontmatter({ ...doc.frontmatter, id: normalizeId(id) }) };
   }
 
   /** Current revision, or NotFoundError. */
+  canonicalStatus(status: string): string { return this.config.get().statusAliases?.[status] ?? status; }
+  priorityRank(priority: string): number { return this.config.get().priorities?.find(p => p.id === priority)?.rank ?? 2; }
+  private normalizeFrontmatter(fm: Frontmatter): Frontmatter {
+    const hash = createHash("sha256").update(fm.status_detail).digest("hex");
+    return { ...fm, status: this.canonicalStatus(fm.status), status_detail_updated_at: fm.status_detail_fingerprint === hash ? fm.status_detail_updated_at : null };
+  }
+  private validateStatusText(value: string): string {
+    const text = value.trim();
+    if (text.length > 600 || /\n\s*\n/.test(text)) throw new ValidationError("Current status must be one paragraph of at most 600 characters; put history in observations.");
+    return text;
+  }
+  private event(markdown: string, changes: NonNullable<Observation["changes"]>, event = "task.updated", extra: Partial<Observation> = {}): Observation {
+    const at = new Date().toISOString();
+    return { id: newObservationId(), at, recorded_at: at, author: "system", kind: "system", markdown, changes, event, ...extra };
+  }
+  async document(id: string): Promise<TaskDocument> {
+    const doc = await this.loadDocument(id);
+    if ("valid" in doc) throw new ValidationError(doc.parseError);
+    return doc;
+  }
+  async observation(id: string, observationId: string): Promise<Observation> {
+    const doc = await this.document(id);
+    const found = (await this.store.loadObservations(normalizeId(id), doc.format)).find(o => o.id === observationId);
+    if (!found) throw new NotFoundError("Observation not found");
+    return found;
+  }
+  async allObservations(id: string): Promise<Observation[]> {
+    const doc = await this.document(id);
+    return this.store.loadObservations(normalizeId(id), doc.format);
+  }
   private async revOf(id: string): Promise<number> {
     const rev = await this.store.rev(normalizeId(id));
     if (rev === null) throw new NotFoundError(`Task ${normalizeId(id)} not found`);
@@ -193,7 +196,7 @@ export class FsTaskRepository {
       return this.invalid(id, 0, `Cannot read task ${normalizeId(id)}: ${(err as Error).message}`);
     }
     if (!doc.ok) return this.invalid(id, doc.rev, doc.error, doc.rawFrontmatter, doc.rawBody);
-    const fm = { ...doc.frontmatter, id: normalizeId(id) };
+    const fm = this.normalizeFrontmatter({ ...doc.frontmatter, id: normalizeId(id) });
     // Counting is deliberately separate from loading: the structured store counts
     // lines without deserializing a single observation body.
     const attachmentCount = await this.attachments
@@ -240,6 +243,7 @@ export class FsTaskRepository {
       summaryMarkdown: getSection(doc.body, "Summary"),
       scopeMarkdown: getSection(doc.body, "Scope"),
       qaMarkdown: getSection(doc.body, "QA"),
+      verificationMarkdown: getSection(doc.body, "Verification evidence"),
       observations: history.observations,
       observationCount: history.total,
       attachments,
@@ -293,6 +297,7 @@ export class FsTaskRepository {
       summaryMarkdown: getSection(body, "Summary"),
       scopeMarkdown: getSection(body, "Scope"),
       qaMarkdown: getSection(body, "QA"),
+      verificationMarkdown: getSection(body, "Verification evidence"),
       observations: page.observations,
       observationCount: page.total,
       attachments,
@@ -316,7 +321,7 @@ export class FsTaskRepository {
 
   // ── Create ────────────────────────────────────────────────────────────────────
   async create(req: CreateRequest): Promise<TaskDetail> {
-    return this.createWithLineage(req, null);
+    return this.gate.run(() => this.createWithLineage(req, null));
   }
 
   private async createWithLineage(
@@ -324,6 +329,8 @@ export class FsTaskRepository {
     recurrenceOf: string | null,
   ): Promise<TaskDetail> {
     return this.allocationLock.runExclusive(async () => {
+      this.validateStatusText(req.status_detail);
+      if (!this.config.get().priorities?.some(p=>p.id === req.priority)) throw new ValidationError("Unknown priority");
       const id = await this.resolveNewId(req.id);
       await this.store.createDirectories(id);
 
@@ -335,8 +342,14 @@ export class FsTaskRepository {
         category: req.category,
         severity: req.severity,
         risk: req.risk,
-        status: req.status,
-        status_detail: req.status_detail,
+        status: this.canonicalStatus(req.status),
+        status_detail: this.validateStatusText(req.status_detail),
+        status_detail_updated_at: new Date().toISOString(),
+        status_detail_fingerprint: createHash("sha256").update(req.status_detail.trim()).digest("hex"),
+        latest_note_at: null,
+        priority: req.priority,
+        next_action: req.next_action,
+        communications: [],
         blocker: req.blocker ?? "",
         blocked_since: req.blocker ? new Date().toISOString() : null,
         created: today,
@@ -362,11 +375,10 @@ export class FsTaskRepository {
           { heading: "Scope", content: req.scope.trim() },
           // QA is written only when provided — most tasks never need the section.
           ...(req.qa.trim() ? [{ heading: "QA", content: req.qa.trim() }] : []),
+          ...(req.verification.trim() ? [{ heading: "Verification evidence", content: req.verification.trim() }] : []),
         ],
       };
-      const appendObservations: Observation[] = fm.blocker ? [{
-        at: fm.blocked_since!, author: "system", markdown: `Blocker started:\n\n${blockerHistory(fm.blocker)}`,
-      }] : [];
+      const appendObservations: Observation[] = fm.blocker ? [this.event("Blocker started.", {blocker:{before:"",after:fm.blocker}}, "blocker.started", {started_at:fm.blocked_since})] : [];
       const rev = await this.store.save(
         id,
         { frontmatter: fm, body, appendObservations, previousObservationCount: 0 },
@@ -418,18 +430,23 @@ export class FsTaskRepository {
         const before: Frontmatter = { ...fm };
         const prevStatus = fm.status;
         Object.assign(fm, req.fields);
+        fm.status = this.canonicalStatus(fm.status);
+        if (req.fields.priority !== undefined && !this.config.get().priorities?.some(p => p.id === fm.priority)) throw new ValidationError("Unknown priority");
+        if (req.fields.status_detail !== undefined && req.fields.status_detail !== before.status_detail) {
+          fm.status_detail = this.validateStatusText(req.fields.status_detail);
+          if (fm.status_detail !== before.status_detail) {
+            fm.status_detail_updated_at = new Date(Math.max(Date.now(), Date.parse(fm.latest_note_at ?? "") + 1 || 0)).toISOString();
+            fm.status_detail_fingerprint = createHash("sha256").update(fm.status_detail).digest("hex");
+          }
+        }
         if (req.fields.blocker !== undefined && fm.blocker !== before.blocker) {
           const at = new Date().toISOString();
           fm.blocked_since = fm.blocker ? (before.blocked_since ?? at) : null;
-          appendObservations.push({
-            at,
-            author: "system",
-            markdown: fm.blocker
-              ? before.blocker
-                ? `Blocker updated (started ${fm.blocked_since}).\n\nPrevious details:\n\n${blockerHistory(before.blocker)}\n\nUpdated details:\n\n${blockerHistory(fm.blocker)}`
-                : `Blocker started:\n\n${blockerHistory(fm.blocker)}`
-              : `Blocker resolved (started ${before.blocked_since ?? "unknown"}; resolved ${at}):\n\n${blockerHistory(before.blocker)}`,
-          });
+          const action = fm.blocker ? (before.blocker ? "updated" : "started") : "resolved";
+          appendObservations.push(this.event(
+            `Blocker ${action}.`, {blocker:{before:before.blocker,after:fm.blocker}}, `blocker.${action}`,
+            {started_at:before.blocked_since ?? fm.blocked_since, resolved_at:fm.blocker ? null : at},
+          ));
         }
         fm.id = normalizeId(id); // id is not editable
         if (req.fields.status !== undefined) {
@@ -439,23 +456,25 @@ export class FsTaskRepository {
             fm.completed = undefined;
           }
         }
-        // An API patch comes from the web UI (= the user editing manually), so record what
-        // changed under Observations. An agent editing the task file directly goes through
-        // the watcher, not here — so this only logs human/UI edits, by design.
-        const changes = describeFieldChanges(before, fm);
-        if (changes.length > 0) {
-          appendObservations.push({
-            at: new Date().toISOString(),
-            author: "human",
-            markdown: `Updated via web UI — ${changes.join("; ")}.`,
-          });
+        const changes: NonNullable<Observation["changes"]> = {};
+        for (const key of Object.keys(req.fields) as (keyof Frontmatter)[]) {
+          if (key !== "blocker" && JSON.stringify(before[key]) !== JSON.stringify(fm[key])) changes[key] = {before:before[key],after:fm[key]};
         }
+        if (Object.keys(changes).length) appendObservations.push(this.event(`Updated ${Object.keys(changes).join(", ")}.`, changes));
       }
       if (req.body) {
         if (req.body.summary !== undefined) body = setSection(body, "Summary", req.body.summary);
         if (req.body.scope !== undefined) body = setSection(body, "Scope", req.body.scope);
         if (req.body.qa !== undefined) body = setSection(body, "QA", req.body.qa);
+        if (req.body.verification !== undefined) body = setSection(body, "Verification evidence", req.body.verification);
+        const changes: NonNullable<Observation["changes"]> = {};
+        for (const [key,heading] of [["summary","Summary"],["scope","Scope"],["qa","QA"],["verification","Verification evidence"]] as const) {
+          const before = getSection(doc.body,heading), after = getSection(body,heading);
+          if (before !== after) changes[key] = {before,after};
+        }
+        if (Object.keys(changes).length) appendObservations.push(this.event(`Updated ${Object.keys(changes).join(", ")}.`,changes));
       }
+      if (!appendObservations.length && JSON.stringify(fm) === JSON.stringify(doc.frontmatter)) return {conflict:false,task:await this.readDetailStrict(id)};
       fm.updated = this.today();
 
       const rev = await this.store.save(
@@ -486,13 +505,14 @@ export class FsTaskRepository {
       }
       const fm: Frontmatter = { ...doc.frontmatter };
       fm.updated = this.today();
-      const appendObservations: Observation[] = [
-        {
-          at: req.at && req.at.trim() ? req.at.trim() : new Date().toISOString(),
-          author: req.author,
-          markdown: req.text.trim(),
-        },
-      ];
+      if (req.verification === "verified" && !req.verification_evidence?.trim()) throw new ValidationError("Verified notes require evidence describing the check and result.");
+      const recordedAt = new Date(Math.max(Date.now(), Date.parse(fm.latest_note_at ?? "") + 1 || 0, Date.parse(fm.status_detail_updated_at ?? "") + 1 || 0)).toISOString();
+      fm.latest_note_at = recordedAt;
+      const appendObservations: Observation[] = [{
+        id: newObservationId(), at: req.at?.trim() || recordedAt, recorded_at:recordedAt,
+        author:req.author, kind:"note", markdown:req.text.trim(), verification:req.verification ?? "unverified",
+        verification_evidence:req.verification_evidence?.trim(),
+      }];
 
       // In the structured format this appends one line; the history is never rewritten.
       const rev = await this.store.save(
@@ -508,6 +528,36 @@ export class FsTaskRepository {
         rev: detail.rev,
       });
       return { conflict: false, task: detail };
+    });
+  }
+
+  async mutateCommunication(id: string, req: CommunicationMutation, create: boolean): Promise<MutationResult> {
+    return this.lockFor(id).runExclusive(async () => {
+      const doc = await this.document(id);
+      const fm = { ...doc.frontmatter, communications: [...doc.frontmatter.communications] };
+      const previous = fm.communications.find(c => c.id === req.item_id);
+      const fields = create ? CommunicationFieldsSchema.parse(req.fields) : {...req.fields};
+      if (["replied","cancelled"].includes(fields.state ?? "") && req.fields.awaiting_reply === undefined) fields.awaiting_reply=false;
+      const fingerprint = createHash("sha256").update(JSON.stringify(fields)).digest("hex");
+      if (create && previous) {
+        if (previous.creation_fingerprint === fingerprint) return {conflict:false,task:await this.readDetailStrict(id)};
+        throw new ValidationError("Communication ID already exists with different content");
+      }
+      if (doc.rev !== req.baseRev) return {conflict:true,current:await this.read(id,20)};
+      if (!create && !previous) throw new NotFoundError("Communication not found");
+      const at = new Date().toISOString();
+      const item = CommunicationSchema.parse({...previous,...fields,id:previous?.id ?? req.item_id ?? newObservationId().replace("obs_","msg_"),created_at:previous?.created_at ?? at,updated_at:at,creation_fingerprint:previous?.creation_fingerprint ?? fingerprint});
+      if (create && item.state === "replied") throw new ValidationError("Record a sent item before recording its reply");
+      if (previous?.sent_at && (!item.sent_at || item.state === "draft")) throw new ValidationError("Sent history cannot be removed; create another item for a new send");
+      if (item.state === "replied" && !previous?.sent_at) throw new ValidationError("Only an existing sent item can receive a reply");
+      if (previous) fm.communications[fm.communications.indexOf(previous)] = item;
+      else fm.communications.push(item);
+      fm.updated = this.today();
+      const observation = this.event(`Communication ${create ? "recorded" : "updated"}: ${item.subject}.`,{[`communication:${item.id}`]:{before:previous ?? null,after:item}},"communication.updated");
+      const rev = await this.store.save(normalizeId(id),{frontmatter:fm,body:doc.body,appendObservations:[observation],previousObservationCount:doc.observationCount},doc.format);
+      const task = await this.detailAfterWrite(id,fm,doc.body,rev,doc.observationCount+1);
+      this.bus.publish({type:"task.updated",id:normalizeId(id),task:this.summaryFromDetail(task),rev});
+      return {conflict:false,task};
     });
   }
 
@@ -582,6 +632,8 @@ export class FsTaskRepository {
         risk: source.risk,
         status: "Backlog",
         status_detail: "",
+        priority: source.priority,
+        next_action: null,
         tags: [...source.tags],
         skills: [...source.skills],
         recurring: true,
@@ -595,6 +647,7 @@ export class FsTaskRepository {
         // How-to-test steps are content, not lifecycle state: the next occurrence is
         // tested the same way, so they carry forward with summary/scope.
         qa: source.qaMarkdown,
+        verification: "",
       },
       sourceId,
     );
@@ -645,6 +698,12 @@ export class FsTaskRepository {
       risk: detail.risk,
       status: detail.status,
       status_detail: detail.status_detail,
+      status_detail_updated_at: detail.status_detail_updated_at,
+      status_detail_fingerprint: detail.status_detail_fingerprint,
+      latest_note_at: detail.latest_note_at,
+      priority: detail.priority,
+      next_action: detail.next_action,
+      communications: detail.communications,
       blocker: detail.blocker,
       blocked_since: detail.blocked_since,
       created: detail.created,
@@ -664,13 +723,13 @@ export class FsTaskRepository {
       sources: detail.sources,
       resources: detail.resources,
     };
-    return toTaskSummary({
+    return {...toTaskSummary({
       fm,
       rev: detail.rev,
       summaryMarkdown: detail.summaryMarkdown,
       scopeMarkdown: detail.scopeMarkdown,
       attachmentCount: detail.attachments.length,
       observationCount: detail.observationCount,
-    });
+    }), communication_counts: detail.communication_counts};
   }
 }

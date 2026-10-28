@@ -4,6 +4,8 @@
  * body split into "## Summary", "## Scope", "## Observations" (and any other
  * sections, which are preserved verbatim).
  */
+import { decodeObservationMetadata, legacyObservationId } from "./observation";
+import { statusFreshness } from "@AiDailyTasks/shared";
 import matter from "gray-matter";
 import yaml from "js-yaml";
 import {
@@ -93,11 +95,13 @@ export function parseObservations(sectionContent: string): Observation[] {
     const m = matches[i];
     const start = (m.index ?? 0) + m[0].length;
     const end = i + 1 < matches.length ? (matches[i + 1].index ?? sectionContent.length) : sectionContent.length;
-    out.push({
+    const observation: Observation = {
       at: m[1],
       author: m[2].trim(),
-      markdown: sectionContent.slice(start, end).replace(/^\n+|\n+$/g, ""),
-    });
+      ...decodeObservationMetadata(sectionContent.slice(start, end).replace(/^\n+|\n+$/g, "")),
+    };
+    observation.id ??= legacyObservationId(observation, i);
+    out.push(observation);
   }
   return out;
 }
@@ -141,6 +145,13 @@ const KEY_ORDER: readonly (keyof Frontmatter)[] = [
   "risk",
   "status",
   "status_detail",
+  "status_detail_updated_at",
+  "status_detail_fingerprint",
+  "observation_fingerprint",
+  "latest_note_at",
+  "priority",
+  "next_action",
+  "communications",
   "blocker",
   "blocked_since",
   "created",
@@ -167,6 +178,7 @@ function orderedFrontmatter(fm: Frontmatter): Record<string, unknown> {
   const o: Record<string, unknown> = {};
   for (const key of KEY_ORDER) {
     const value = fm[key];
+    if (value === undefined) continue;
     if (key === "archived") {
       // Boolean flag; only persisted when true so active tasks stay unchanged.
       if (value === true) o[key] = true;
@@ -234,6 +246,9 @@ export function toTaskSummary(args: {
     ...args.fm,
     rev: args.rev,
     valid: true,
+    communications: [],
+    status_freshness: statusFreshness(args.fm),
+    communication_counts: { draft: args.fm.communications.filter(c => c.state === "draft").length, awaiting_reply: args.fm.communications.filter(c => c.state === "sent" && c.awaiting_reply).length },
     excerpt: excerpt(excerptSource),
     attachmentCount: args.attachmentCount,
     observationCount: args.observationCount,
@@ -254,6 +269,7 @@ export function buildTaskDetail(args: {
   summaryMarkdown: string;
   scopeMarkdown: string;
   qaMarkdown: string;
+  verificationMarkdown?: string;
   /** The newest page (oldest-to-newest within the page), or the whole history. */
   observations: Observation[];
   /** Length of the complete history, not of the page above. */
@@ -267,6 +283,12 @@ export function buildTaskDetail(args: {
     ...args.fm,
     rev: args.rev,
     valid: true,
+    status_freshness: statusFreshness(args.fm),
+    communications: [],
+    communication_count: args.fm.communications.length,
+    communication_counts: {draft:args.fm.communications.filter(c=>c.state === "draft").length,awaiting_reply:args.fm.communications.filter(c=>c.state === "sent" && c.awaiting_reply).length},
+    summary: args.summaryMarkdown, scope: args.scopeMarkdown, qa: args.qaMarkdown, verification: args.verificationMarkdown ?? "",
+    verificationMarkdown: args.verificationMarkdown ?? "",
     summaryMarkdown: args.summaryMarkdown,
     scopeMarkdown: args.scopeMarkdown,
     qaMarkdown: args.qaMarkdown,
@@ -305,6 +327,7 @@ export function toTaskDetail(args: {
     summaryMarkdown: getSection(args.parsed, "Summary"),
     scopeMarkdown: getSection(args.parsed, "Scope"),
     qaMarkdown: getSection(args.parsed, "QA"),
+    verificationMarkdown: getSection(args.parsed, "Verification evidence"),
     observations: limit === undefined ? all : all.slice(-Math.max(1, limit)),
     observationCount: all.length,
     attachments: args.attachments,

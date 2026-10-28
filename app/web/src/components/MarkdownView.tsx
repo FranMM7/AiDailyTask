@@ -1,4 +1,4 @@
-import { useMemo, type ComponentPropsWithoutRef } from "react";
+import { memo, useMemo, type ComponentPropsWithoutRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
@@ -50,7 +50,7 @@ function linkifyTaskIds(markdown: string): string {
     .join("");
 }
 
-export function MarkdownView({ markdown }: { markdown: string }) {
+export const MarkdownView = memo(function MarkdownView({ markdown }: { markdown: string }) {
   const { openTask } = useTaskDrawer();
   const source = useMemo(() => linkifyTaskIds(markdown ?? ""), [markdown]);
 
@@ -111,4 +111,4 @@ export function MarkdownView({ markdown }: { markdown: string }) {
       </ReactMarkdown>
     </div>
   );
-}
+});

@@ -5,7 +5,7 @@ description: Orchestrate AiDailyTasks board work from discovery through completi
 
 # Orchestrate Board Work
 
-Treat `board/<ID>/task.md` as the durable handoff and source of truth. Read `AGENTS.md` and the target task before acting. Read relevant attachments under `board/<ID>/files/`.
+Treat `board/<ID>/task.json` (or legacy `task.md` when JSON is absent) as the durable handoff and source of truth. Read `AGENTS.md` and the target task before acting. Read relevant attachments under `board/<ID>/files/`.
 
 ## Route the request
 
@@ -47,3 +47,13 @@ disconnect/reconnect or restart so `.mcp.json` and tool schemas reload. Prefer t
 direct-TSX stdio config. Never claim queued board writes succeeded: after reconnecting, re-read the
 task/project, apply the queued change, and verify it with a read-back. An MCP tool cannot restart its
 own unavailable transport.
+
+## Current status, evidence and activity
+
+Keep status_detail to one current paragraph of at most 600 characters. Read freshness before resuming: newer_notes requests a review, unknown lacks a trustworthy baseline. Generated lifecycle history does not establish verification.
+
+Use observations for timestamped findings, preserving verified/unverified/assumption labels. A verified note needs evidence stating the check, result and limits; leave historical unclassified records as unclassified. Put Francis's reproducible user steps in qa (User test script); put execution results in observations and the separate verification (Verification evidence) section. Neither writing evidence nor a verified label automatically completes the task.
+
+For activity summaries, use list_changes with timezone-qualified boundaries and follow every next_cursor. Fetch full records by observation_id when excerpts are insufficient. Respect legacy/history-unavailable coverage and treat current status as current context.
+
+Use priority and next_action for explicit work ordering and the next owner/date. Communication items record local facts: drafts are unsent, and only sent items marked awaiting_reply belong in Waiting on. Creating a communication record grants no authority to send an external message. Recurring successors clear actions, communications and past verification results.

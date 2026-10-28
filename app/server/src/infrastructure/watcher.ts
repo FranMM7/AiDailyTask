@@ -49,7 +49,13 @@ export class BoardWatcher {
       ignoreInitial: true,
       awaitWriteFinish: { stabilityThreshold: 250, pollInterval: 100 },
       // Atomic writes land as `<name>.tmp-<nanoid>` siblings before the rename.
-      ignored: (p: string) => /\.tmp-[A-Za-z0-9_-]+$/.test(p),
+      ignored: (p: string) => {
+        const relative = path.relative(this.env.boardDir, p).split(path.sep).join("/");
+        // Write locks are rapidly created/removed by HTTP and stdio. Watching them
+        // can race Windows realpath and crash chokidar; they carry no board content.
+        return relative === "_meta/runtime" || relative.startsWith("_meta/runtime/")
+          || /\.(?:tmp|migration)-[A-Za-z0-9_-]+$/.test(p);
+      },
     });
     this.watcher
       .on("add", (p) => this.onTaskChange(p))

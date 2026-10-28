@@ -1,3 +1,5 @@
+import { StatusMigrationService } from "./application/statusMigration";
+import { WorkflowService } from "./application/workflow";
 /**
  * Shared composition root: wires config + repository + services over the board/
  * filesystem. Used by BOTH the HTTP server (main.ts) and the stdio MCP entrypoint
@@ -53,7 +55,10 @@ export async function buildCore(env: Env, bus: EventBus): Promise<Core> {
   const projects = new ProjectsService(env, bus);
   await projects.ensureFile();
 
+  const workflow = new WorkflowService(repo);
   const services: Services = {
+    workflow,
+    statusMigration: new StatusMigrationService(env, config, repo),
     storageInfo: () => ({
       applicationRoot: env.root,
       dataRoot: path.dirname(env.boardDir),
@@ -69,7 +74,7 @@ export async function buildCore(env: Env, bus: EventBus): Promise<Core> {
     }),
     config,
     projects,
-    tasks: new TaskService(repo),
+    tasks: new TaskService(repo, workflow),
     attachments: new AttachmentService(attachmentStore, repo, bus),
     resources: new AttachmentService(resourceStore, repo, bus),
     library: new LibraryResourceService(libraryStore),

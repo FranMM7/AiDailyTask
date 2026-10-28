@@ -151,6 +151,7 @@ function invalidateTaskViews(qc: QueryClient, id: string): void {
   void qc.invalidateQueries({ queryKey: ["tasks"] });
   void qc.invalidateQueries({ queryKey: ["task", id] });
   void qc.invalidateQueries({ queryKey: ["graph"] });
+  void qc.invalidateQueries({ queryKey: ["communications"] });
 }
 
 /** The rev this tab currently believes a task is at. */
@@ -331,7 +332,12 @@ export function useAddObservation() {
       settleTaskWrite(qc, id);
     },
     onSuccess: ({ task }, { id }) => {
-      qc.setQueryData<TaskResponse>(["task", id], { task });
+      qc.setQueryData<TaskResponse>(["task", id], (old) => {
+        if (!old?.task.valid) return {task};
+        const notes = new Map(old.task.observations.map(o => [o.id ?? JSON.stringify([o.at,o.author,o.markdown]),o]));
+        for (const note of task.observations) notes.set(note.id ?? JSON.stringify([note.at,note.author,note.markdown]),note);
+        return {task:{...task,observations:[...notes.values()],nextObservationCursor:old.task.nextObservationCursor}};
+      });
       // The save response already has the current task. Updating its compact card
       // in place avoids a full board scan after every appended note.
       qc.setQueriesData<TasksResponse>({ queryKey: ["tasks"] }, (old) =>
@@ -343,6 +349,7 @@ export function useAddObservation() {
                       ...entry,
                       rev: task.rev,
                       updated: task.updated,
+                      status_freshness:task.status_freshness, latest_note_at:task.latest_note_at, status_detail_updated_at:task.status_detail_updated_at,
                       updatedEffective: task.updatedEffective,
                       observationCount: task.observationCount,
                     }
@@ -351,11 +358,21 @@ export function useAddObservation() {
             }
           : old,
       );
+      // An append changes updatedEffective: a cached date-filtered result may
+      // gain/lose this task, and an updated-sort result may need a new order.
+      // Other lists retain the inexpensive in-place update above.
+      void qc.invalidateQueries({ queryKey: ["tasks"], predicate: query => {
+        const filter = query.queryKey[1] as TaskFilter | undefined;
+        return filter?.sort === "updated" ||
+          (filter?.dateField === "updated" && !!(filter.dateFrom || filter.dateTo));
+      } });
     },
     onError: (err, { id }) => {
       if (err instanceof ApiRequestError && err.conflict) {
         qc.setQueryData<TaskResponse>(["task", id], { task: err.conflict.current });
         toast("Reloaded — this task changed on disk. Review and retry.", "error");
+      } else {
+        toast("Couldn't save the note. Your draft is retained; retry when the connection is available.", "error");
       }
     },
   });

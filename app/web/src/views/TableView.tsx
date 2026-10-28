@@ -17,6 +17,8 @@ import { useTaskDrawer } from "@/lib/navigation";
 import { CategoryBadge, InvalidBadge, LevelBadge, StatusBadge } from "@/components/badges";
 
 const col = createColumnHelper<TaskSummaryOrInvalid>();
+// Preserve the API's priority order without giving TanStack a new sorting state every render.
+const SERVER_SORTING: SortingState = [];
 
 function fmtDate(iso: string | undefined): string {
   if (!iso) return "";
@@ -29,6 +31,10 @@ function fmtDate(iso: string | undefined): string {
 // is why header clicks did nothing before. Each accessor returns a sortable
 // primitive (rank for severity/risk/status); the cell renders the badge.
 const columns = [
+  col.accessor(r=>r.valid ? r.priority : "", {id:"priority",header:"Priority"}),
+  col.accessor(r=>r.valid ? r.next_action?.text ?? "" : "", {id:"next_action",header:"Next action"}),
+  col.accessor(r=>r.valid ? r.next_action?.owner ?? "Unassigned" : "", {id:"owner",header:"Owner"}),
+  col.accessor(r=>r.valid ? r.next_action?.due_date ?? "Undated" : "", {id:"due",header:"Due date"}),
   col.accessor((r) => r.id, {
     id: "id",
     header: "ID",
@@ -101,7 +107,7 @@ export function TableView() {
   const table = useReactTable({
     data: rows,
     columns,
-    state: { sorting },
+    state: { sorting: filter.sort === "priority" ? SERVER_SORTING : sorting },
     onSortingChange: setSorting,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),

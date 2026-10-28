@@ -1,5 +1,8 @@
+import { ObservationEvidence } from "./WorkflowPanels";
+import { CommunicationsSection } from "./CommunicationsSection";
 import { BlockerSection } from "./BlockerSection";
 import {
+  memo,
   useEffect,
   useRef,
   useState,
@@ -169,21 +172,28 @@ function ObservationsSection({ task }: { task: TaskDetail }) {
   const addObs = useAddObservation();
   const loadOlder = useLoadOlderObservations();
   const [text, setText] = useState("");
+  const [verification,setVerification]=useState<"verified"|"unverified"|"assumption">("unverified");
+  const [evidence,setEvidence]=useState("");
   const taRef = useRef<HTMLTextAreaElement>(null);
   const { handlePaste, pasting } = useMarkdownComposer(task.id, taRef, setText);
 
   const submit = () => {
     const value = text.trim();
-    if (!value) return;
+    if (!value || addObs.isPending || pasting) return;
+    if (verification === "verified" && !evidence.trim()) { toast("Describe what was checked, how, and the result.","error"); return; }
     addObs.mutate(
-      { id: task.id, body: { baseRev: task.rev, author: "human", text: value } },
-      { onSuccess: () => setText("") },
+      { id: task.id, body: { baseRev: task.rev, author: "human", text: value, verification, verification_evidence:evidence } },
+      { onSuccess: () => { setText(""); setEvidence(""); } },
     );
   };
 
   return (
     <section>
       <h3 className="mb-2 text-sm font-semibold">Observations ({task.observationCount})</h3>
+      <div className="mb-2 space-y-2">
+        <label className="block text-xs">Finding classification <select aria-label="Finding classification" className="rounded border bg-transparent p-1" value={verification} onChange={e=>setVerification(e.target.value as typeof verification)}><option value="unverified">Unverified</option><option value="verified">Verified</option><option value="assumption">Assumption</option></select></label>
+        <label className="block text-xs">Evidence {verification === "verified" ? "(required)" : "(optional)"}<textarea aria-label="Observation evidence" className="mt-1 w-full rounded border bg-transparent p-2" value={evidence} onChange={e=>setEvidence(e.target.value)} placeholder="What was checked, how, and its result and limits" /></label>
+      </div>
       <ObservationComposer
         text={text}
         onTextChange={setText}
@@ -196,14 +206,15 @@ function ObservationsSection({ task }: { task: TaskDetail }) {
       <ol className="space-y-3">
         {[...task.observations].reverse().map((o: Observation, i) => (
           <li
-            key={`${o.at}-${i}`}
+            key={o.id ?? `${o.at}-${i}`}
             className="rounded-lg border border-slate-200 p-3 dark:border-slate-800"
           >
             <div className="mb-1 flex items-center gap-2 text-xs text-slate-500">
               <span className="font-medium text-slate-600 dark:text-slate-300">{o.author}</span>
               <span>{fmtWhen(o.at)}</span>
             </div>
-            <MarkdownView markdown={o.markdown} />
+            <ObservationEvidence observation={o} />
+            <ObservationMarkdown markdown={o.markdown} />
           </li>
         ))}
         {task.observationCount === 0 && (
@@ -573,25 +584,28 @@ function ResourcesSection({ task }: { task: TaskDetail }) {
  * Not every task needs one, so the empty state says exactly that; editing supports markdown
  * with the same paste-a-screenshot-to-embed behavior as the Observations composer.
  */
-function QaSection({ task }: { task: TaskDetail }) {
+function QaSection({ task, field = "qa" }: { task: TaskDetail; field?: "qa" | "verification" }) {
+  const content = task[field];
+  const label = field === "qa" ? "User test script" : "Verification evidence";
   const patch = usePatchTask();
   const [editing, setEditing] = useState(false);
-  const [text, setText] = useState(task.qaMarkdown);
+  const [baseRev,setBaseRev]=useState(task.rev);
+  const [text, setText] = useState(content);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const { handlePaste, pasting } = useMarkdownComposer(task.id, taRef, setText);
 
   // Re-sync the draft when the task changes on disk while not editing.
   useEffect(() => {
-    if (!editing) setText(task.qaMarkdown);
-  }, [task.rev, task.id, editing, task.qaMarkdown]);
+    if (!editing) setText(content);
+  }, [task.rev, task.id, editing, content]);
 
   const save = () => {
     patch.mutate(
-      { id: task.id, body: { baseRev: task.rev, body: { qa: text } } },
+      { id: task.id, body: { baseRev, body: { [field]: text } } },
       {
         onSuccess: () => {
           setEditing(false);
-          toast("QA notes saved", "success");
+          toast(`${label} saved`, "success");
         },
       },
     );
@@ -600,15 +614,15 @@ function QaSection({ task }: { task: TaskDetail }) {
   return (
     <section>
       <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-sm font-semibold">QA — how to test</h3>
+        <h3 className="text-sm font-semibold">{label}</h3>
         {!editing && (
           <button
             type="button"
-            onClick={() => setEditing(true)}
+            onClick={() => {setBaseRev(task.rev);setEditing(true);}}
             className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             <Pencil size={12} />
-            {task.qaMarkdown.trim() ? "Edit" : "Write QA steps"}
+            {content.trim() ? "Edit" : `Write ${label.toLowerCase()}`}
           </button>
         )}
       </div>
@@ -616,11 +630,12 @@ function QaSection({ task }: { task: TaskDetail }) {
       {editing ? (
         <div>
           <textarea
+            aria-label={label}
             ref={taRef}
             value={text}
             onChange={(e) => setText(e.target.value)}
             onPaste={handlePaste}
-            placeholder={"1. Open …\n2. Do …\n3. Expect …\n\nMarkdown supported; paste a screenshot to embed it."}
+            placeholder={field === "qa" ? "Steps and expected results for Francis" : "Date, method, environment, result, limits and evidence links"}
             rows={10}
             className="w-full rounded-md border border-slate-300 bg-transparent p-2 text-sm outline-none focus:border-blue-500 dark:border-slate-700"
           />
@@ -642,7 +657,7 @@ function QaSection({ task }: { task: TaskDetail }) {
               <button
                 type="button"
                 onClick={() => {
-                  setText(task.qaMarkdown);
+                  setText(content);
                   setEditing(false);
                 }}
                 className="rounded-md px-3 py-1.5 text-sm text-slate-500 hover:text-slate-900 dark:hover:text-white"
@@ -655,24 +670,23 @@ function QaSection({ task }: { task: TaskDetail }) {
                 disabled={patch.isPending || pasting}
                 className="rounded-md bg-blue-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
               >
-                {patch.isPending ? "Saving…" : "Save QA notes"}
+                {patch.isPending ? "Saving…" : `Save ${label.toLowerCase()}`}
               </button>
             </div>
           </div>
         </div>
-      ) : task.qaMarkdown.trim() ? (
-        <MarkdownView markdown={task.qaMarkdown} />
+      ) : content.trim() ? (
+        <MarkdownView markdown={content} />
       ) : (
         <p className="text-xs text-slate-500">
-          No QA steps documented. Not every task needs QA — when this one does, write the manual
-          test steps here (markdown; screenshots can be pasted right in).
+          No {label.toLowerCase()} documented. {field === "qa" ? "Write reproducible steps and expected outcomes for Francis." : "Summarize actual checks with dates, results and limits."}
         </p>
       )}
     </section>
   );
 }
 
-type DrawerTab = "details" | "attachments" | "qa" | "blocker";
+type DrawerTab = "details" | "attachments" | "qa" | "blocker" | "verification" | "communications";
 
 function TabButton({
   active,
@@ -764,9 +778,11 @@ function DrawerBody({ id }: { id: string }) {
             active={tab === "qa"}
             onClick={() => setTab("qa")}
             icon={<ClipboardCheck size={14} />}
-            label={task.qaMarkdown.trim() ? "QA ✓" : "QA"}
+            label="User test script"
           />
-        </div>
+          <TabButton active={tab === "verification"} onClick={()=>setTab("verification")} icon={<ClipboardCheck size={14}/>} label="Verification evidence" />
+        <TabButton active={tab === "communications"} onClick={()=>setTab("communications")} icon={<Send size={14}/>} label={`Communications (${task.communication_count})`} />
+      </div>
 
         {tab === "details" && (
           <div className="space-y-6">
@@ -788,7 +804,9 @@ function DrawerBody({ id }: { id: string }) {
           </div>
         )}
         {tab === "attachments" && <AttachmentsSection task={task} />}
-        {tab === "qa" && <QaSection task={task} />}
+        {tab === "qa" && <QaSection key="qa" task={task} />}
+        {tab === "verification" && <QaSection key="verification" task={task} field="verification" />}
+        {tab === "communications" && <CommunicationsSection task={task} />}
         {tab === "blocker" && <BlockerSection key={task.id} task={task} />}
       </div>
 
@@ -833,7 +851,7 @@ export function TaskDrawer() {
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50 data-[state=open]:animate-in" />
         <Dialog.Content
-          className="fixed right-0 top-0 z-50 flex h-full w-[min(72vw,1000px)] min-w-0 flex-col overflow-hidden border-l border-slate-200 bg-white text-slate-900 shadow-2xl outline-none sm:min-w-[22rem] dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
+          className="fixed right-0 top-0 z-50 flex h-full w-full sm:w-[min(72vw,1000px)] max-w-[100vw] min-w-0 flex-col overflow-hidden border-l border-slate-200 bg-white text-slate-900 shadow-2xl outline-none sm:min-w-[22rem] dark:border-slate-800 dark:bg-slate-950 dark:text-slate-100"
           style={drawerWidth ? { width: `${drawerWidth}px` } : undefined}
         >
           <button
@@ -882,3 +900,9 @@ export function TaskDrawer() {
     </Dialog.Root>
   );
 }
+
+const ObservationMarkdown = memo(function ObservationMarkdown({markdown}: {markdown:string}) {
+  const [expanded, setExpanded] = useState(false);
+  if (markdown.length <= 4000 || expanded) return <MarkdownView markdown={markdown} />;
+  return <div><p className="whitespace-pre-wrap break-words text-sm">{markdown.slice(0,800)}...</p><button type="button" className="mt-2 text-sm text-blue-500 underline" onClick={()=>setExpanded(true)}>Read full note ({markdown.length.toLocaleString()} characters)</button></div>;
+});

@@ -24,7 +24,7 @@ export function mcpHttpUrl(env: Env): string {
   return `http://${env.host}:${env.port}/mcp`;
 }
 
-export function registerMcpHttp(app: FastifyInstance, services: Services, env: Env): void {
+export function registerMcpHttp(app: FastifyInstance, services: Services, env: Env, clock: () => number = Date.now): void {
   interface SessionEntry {
     transport: StreamableHTTPServerTransport;
     lastActivity: number;
@@ -39,7 +39,7 @@ export function registerMcpHttp(app: FastifyInstance, services: Services, env: E
     await entry.transport.close().catch(() => {});
   };
   const reapSessions = (): void => {
-    const now = Date.now();
+    const now = clock();
     const idle = [...transports.entries()]
       .filter(([, entry]) => entry.openStreams === 0 && now - entry.lastActivity > SESSION_IDLE_MS)
       .sort((a, b) => a[1].lastActivity - b[1].lastActivity);
@@ -47,6 +47,10 @@ export function registerMcpHttp(app: FastifyInstance, services: Services, env: E
   };
   const sessionReaper = setInterval(reapSessions, 60_000);
   sessionReaper.unref();
+  app.addHook("onClose", async () => {
+    clearInterval(sessionReaper);
+    await Promise.all([...transports].map(([id, entry]) => closeSession(id, entry)));
+  });
 
   // Connection details for the in-app Connect page (copy-paste configs).
   app.get("/api/mcp-info", async (_req, reply) => {
@@ -87,6 +91,7 @@ export function registerMcpHttp(app: FastifyInstance, services: Services, env: E
   app.post("/mcp", async (req: FastifyRequest, reply: FastifyReply) => {
     reply.hijack(); // the transport owns the raw response
     try {
+      reapSessions();
       const sessionId = req.headers["mcp-session-id"] as string | undefined;
       let entry = sessionId ? transports.get(sessionId) : undefined;
       let transport = entry?.transport;
@@ -110,7 +115,7 @@ export function registerMcpHttp(app: FastifyInstance, services: Services, env: E
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (sid) => {
-            entry = { transport: transport as StreamableHTTPServerTransport, lastActivity: Date.now(), openStreams: 0 };
+            entry = { transport: transport as StreamableHTTPServerTransport, lastActivity: clock(), openStreams: 0 };
             transports.set(sid, entry);
           },
         });
@@ -120,7 +125,7 @@ export function registerMcpHttp(app: FastifyInstance, services: Services, env: E
         const server = buildMcpServer(services);
         await server.connect(transport);
       }
-      if (entry) entry.lastActivity = Date.now();
+      if (entry) entry.lastActivity = clock();
       await transport.handleRequest(req.raw, reply.raw, req.body);
     } catch (err) {
       app.log.error({ err }, "MCP POST failed");
@@ -131,6 +136,7 @@ export function registerMcpHttp(app: FastifyInstance, services: Services, env: E
   // GET = server→client SSE stream; DELETE = end session. Both require an existing session.
   const handleSession = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     reply.hijack();
+    reapSessions();
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
     const entry = sessionId ? transports.get(sessionId) : undefined;
     const sessionFailure = mcpSessionFailure(sessionId, Boolean(entry), false);
@@ -140,7 +146,7 @@ export function registerMcpHttp(app: FastifyInstance, services: Services, env: E
     }
     // The classifier guarantees an entry when no failure is returned.
     if (!entry || !sessionId) return;
-    entry.lastActivity = Date.now();
+    entry.lastActivity = clock();
     if (req.method === "GET") entry.openStreams += 1;
     try {
       await entry.transport.handleRequest(req.raw, reply.raw);
@@ -148,7 +154,7 @@ export function registerMcpHttp(app: FastifyInstance, services: Services, env: E
     } finally {
       if (req.method === "GET") {
         entry.openStreams = Math.max(0, entry.openStreams - 1);
-        entry.lastActivity = Date.now();
+        entry.lastActivity = clock();
       }
     }
   };

@@ -18,12 +18,34 @@
  */
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import readline from "node:readline";
+import { pathToFileURL } from "node:url";
+import path from "node:path";
+import { existsSync } from "node:fs";
 
-interface Options {
+export interface Options {
   port: number;
   minutes: number;
   auth?: string;
   domain?: string;
+}
+
+function notifyParent(message: object): void {
+  if (!process.connected || !process.send) return;
+  // A parent can disappear between the connected check and the send. Never let
+  // a broken reporting channel skip tunnel cleanup.
+  try { process.send(message, () => {}); } catch { /* Parent already closed. */ }
+}
+
+export function ngrokExecutable(): string {
+  if (process.platform !== "win32") return "ngrok";
+  const found = spawnSync("where.exe", ["ngrok.exe"], { encoding: "utf8", windowsHide: true });
+  const executable = found.status === 0 ? found.stdout.trim().split(/\r?\n/)[0] : undefined;
+  if (!executable) return "ngrok";
+  // Chocolatey's shim can exit before its child when the parent disconnects,
+  // leaving taskkill with a vanished root PID. Own the actual binary instead.
+  const packaged = path.resolve(path.dirname(executable), "../lib/ngrok/tools/ngrok.exe");
+  if (path.basename(path.dirname(executable)).toLowerCase() === "bin" && existsSync(packaged)) return packaged;
+  return executable;
 }
 
 function parseArgs(argv: string[]): Options {
@@ -109,7 +131,7 @@ function spawnNgrok(opts: Options): ChildProcess {
   const args = ["http", String(opts.port), "--log", "stdout", "--log-format", "logfmt"];
   if (opts.auth) args.push("--basic-auth", opts.auth);
   if (opts.domain) args.push("--domain", opts.domain);
-  const child = spawn("ngrok", args, { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(ngrokExecutable(), args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
   child.stderr?.on("data", (d: Buffer) => process.stderr.write(d));
   return child;
 }
@@ -124,7 +146,7 @@ function logfmtField(line: string, key: string): string | undefined {
  * Watch ngrok's stdout for the "started tunnel" line (→ resolve with its url) or an
  * error line (→ reject with ngrok's own message). Rejects on timeout as a backstop.
  */
-function waitForPublicUrl(child: ChildProcess, timeoutMs = 20000): Promise<string> {
+export function waitForPublicUrl(child: ChildProcess, timeoutMs = 20000): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     if (!child.stdout) return reject(new Error("ngrok produced no output stream."));
     const rl = readline.createInterface({ input: child.stdout });
@@ -135,10 +157,17 @@ function waitForPublicUrl(child: ChildProcess, timeoutMs = 20000): Promise<strin
     const cleanup = (): void => {
       clearTimeout(timer);
       rl.close();
+      child.stdout?.resume();
+      child.off("error", onError);
+      child.off("exit", onExit);
     };
+    const onError = (error: Error): void => { cleanup(); reject(error); };
+    const onExit = (): void => { cleanup(); reject(new Error("ngrok exited before reporting a URL. Check your ngrok authtoken and account limits.")); };
+    child.once("error", onError);
+    child.once("exit", onExit);
     rl.on("line", (line) => {
       const url = logfmtField(line, "url");
-      if (url && /^https?:\/\//.test(url)) {
+      if (url && /^https:\/\//.test(url)) {
         cleanup();
         resolve(url);
         return;
@@ -154,21 +183,28 @@ function waitForPublicUrl(child: ChildProcess, timeoutMs = 20000): Promise<strin
 
 /** Kill ngrok and its children. On Windows the PATH `ngrok` is a shim that spawns the
  *  real ngrok.exe, so a plain kill() orphans it — use taskkill /T to take the whole tree. */
-function killTree(child: ChildProcess): void {
+export function killTree(child: ChildProcess): void {
   if (child.killed || child.pid === undefined) return;
   if (process.platform === "win32") {
-    spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+    spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
   } else {
     child.kill();
   }
 }
 
 async function main(): Promise<void> {
-  const opts = parseArgs(process.argv.slice(2));
+  // Cover disconnect/stop during the server health check, before ngrok is spawned.
+  let stopWorker = (): void => process.exit(0);
+  process.on("disconnect", () => stopWorker());
+  process.on("message", (message: { type?: string }) => { if (message.type === "stop") stopWorker(); });
+  const opts: Options = process.send
+    ? await new Promise(resolve => process.once("message", (message: { options: Options }) => resolve(message.options)))
+    : parseArgs(process.argv.slice(2));
 
   await assertServerRunning(opts.port);
 
   const child = spawnNgrok(opts);
+  process.once("exit", () => killTree(child));
 
   let closed = false;
   const shutdown = (code: number, msg?: string): void => {
@@ -176,8 +212,15 @@ async function main(): Promise<void> {
     closed = true;
     if (msg) console.log(msg);
     killTree(child);
+    if (code !== 0) notifyParent({ type: "error", message: "ngrok could not start. Check its authtoken, account limits and configuration, or run npm run share for details." });
     process.exit(code);
   };
+
+  // The worker owns expiry and cleanup even if the HTTP process is restarted/killed.
+  stopWorker = () => shutdown(0);
+  const onSignal = (): void => shutdown(0, "\nClosing the tunnel…");
+  process.on("SIGINT", onSignal);
+  process.on("SIGTERM", onSignal);
 
   child.on("error", (err) => {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") {
@@ -203,6 +246,7 @@ async function main(): Promise<void> {
   }
 
   const closesAt = new Date(Date.now() + opts.minutes * 60_000);
+  notifyParent({ type: "ready", url: publicUrl, expiresAt: closesAt.toISOString() });
   const hhmm = closesAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   console.log("");
   console.log(`  🌐  Board shared:  ${publicUrl}`);
@@ -221,12 +265,10 @@ async function main(): Promise<void> {
   }, opts.minutes * 60_000);
   timer.unref();
 
-  const onSignal = (): void => shutdown(0, "\nClosing the tunnel…");
-  process.on("SIGINT", onSignal);
-  process.on("SIGTERM", onSignal);
 }
 
-main().catch((err) => {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) main().catch((err) => {
+  notifyParent({ type: "error", message: "Could not start sharing. Check the running server and ngrok configuration." });
   console.error(err instanceof Error ? err.message : String(err));
   process.exit(1);
 });

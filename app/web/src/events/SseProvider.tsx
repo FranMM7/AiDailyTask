@@ -54,6 +54,7 @@ export function SseProvider({ children }: { children: ReactNode }) {
         case "hello":
           break;
         case "task.created": {
+          void qc.invalidateQueries({ queryKey: ["communications"] });
           const summary: TaskSummaryOrInvalid = evt.task;
           qc.setQueriesData<TasksResponse>({ queryKey: ["tasks"] }, (old) =>
             old && !old.tasks.some((t) => t.id === summary.id)
@@ -72,18 +73,21 @@ export function SseProvider({ children }: { children: ReactNode }) {
           // full after every note the user adds. The mutation reconciles on
           // settle if this turns out to have been someone else's write.
           if (suppressOwnEcho(evt.id, evt.rev)) break;
+          void qc.invalidateQueries({ queryKey: ["communications"] });
           void qc.invalidateQueries({ queryKey: ["task", evt.id] });
           void qc.invalidateQueries({ queryKey: ["tasks"] });
           void qc.invalidateQueries({ queryKey: ["graph"] });
           break;
         }
         case "task.deleted": {
+          void qc.invalidateQueries({ queryKey: ["communications"] });
           qc.removeQueries({ queryKey: ["task", evt.id] });
           void qc.invalidateQueries({ queryKey: ["tasks"] });
           void qc.invalidateQueries({ queryKey: ["graph"] });
           break;
         }
         case "task.invalid": {
+          void qc.invalidateQueries({ queryKey: ["communications"] });
           void qc.invalidateQueries({ queryKey: ["task", evt.id] });
           void qc.invalidateQueries({ queryKey: ["tasks"] });
           break;

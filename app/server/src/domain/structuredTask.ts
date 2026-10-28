@@ -1,3 +1,5 @@
+import { renderObservation } from "./observation";
+import { ObservationMetadataSchema } from "@AiDailyTasks/shared";
 /**
  * Versioned, portable representation for the structured board store.
  *
@@ -43,6 +45,7 @@ const BodySectionSchema = z.object({
 const HistoryStampSchema = z.object({
   count: z.number().int().min(0),
   bytes: z.number().int().min(0),
+  modified_at: z.number().optional(),
 });
 export type HistoryStamp = z.infer<typeof HistoryStampSchema>;
 
@@ -59,7 +62,7 @@ export const StructuredTaskFileSchema = z.object({
 });
 export type StructuredTaskFile = z.infer<typeof StructuredTaskFileSchema>;
 
-export const StoredObservationSchema = z.object({
+export const StoredObservationSchema = ObservationMetadataSchema.extend({
   id: z.string().regex(/^obs_[A-Za-z0-9_-]+$/),
   at: z.string().min(1),
   author: z.string().min(1),
@@ -88,8 +91,8 @@ export function structuredFromLegacy(parsed: Extract<ParseResult, { ok: true }>)
 } {
   const observationSection = parsed.parsed.sections.find((section) => section.heading === "Observations");
   const observations = parseObservations(observationSection?.content ?? "").map((observation, index) => ({
-    id: observationId(parsed.frontmatter.id, index, observation),
     ...observation,
+    id: observation.id ?? observationId(parsed.frontmatter.id, index, observation),
   }));
   return {
     task: {
@@ -139,10 +142,15 @@ export function renderStructuredTaskMarkdown(task: StructuredTaskFile, observati
       {
         heading: "Observations",
         content: observations
-          .map((observation) => `### ${observation.at} — ${observation.author}\n\n${observation.markdown}`)
+          .map(renderObservation)
           .join("\n\n"),
       },
     ],
   };
-  return serializeTaskFile(task.frontmatter as Frontmatter, body);
+    const frontmatter = { ...task.frontmatter };
+    if (frontmatter.status_detail_updated_at) {
+      frontmatter.observation_fingerprint = createHash("sha256")
+        .update(body.sections.at(-1)!.content.trim()).digest("hex");
+    }
+    return serializeTaskFile(frontmatter as Frontmatter, body);
 }

@@ -14,6 +14,7 @@ import { BoardWatcher } from "./infrastructure/watcher";
 import { registerRoutes } from "./interface/http/routes";
 import { registerSse } from "./interface/http/sse";
 import { registerStatic } from "./interface/http/static";
+import { registerShareRoutes } from "./interface/http/share";
 import { registerMcpHttp, mcpHttpUrl } from "./interface/mcp/http";
 
 const MAX_UPLOAD_BYTES = 50 * 1024 * 1024; // 50 MB per file
@@ -34,6 +35,7 @@ async function main(): Promise<void> {
   });
 
   registerRoutes(app, services);
+  registerShareRoutes(app, env.port, env.webDistDir);
   registerSse(app, hub);
   registerMcpHttp(app, services, env);
   await registerStatic(app, env);
