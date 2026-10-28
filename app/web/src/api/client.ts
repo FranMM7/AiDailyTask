@@ -6,11 +6,13 @@ import type {
   ConflictResponse,
   CreateProjectRequest,
   CreateRequest,
+  CreateLibraryResource,
   ExportRequest,
   ExportResult,
   GraphData,
   McpInfo,
   ObservationRequest,
+  ObservationPage,
   PatchRequest,
   ProjectDef,
   ProjectDocumentation,
@@ -18,6 +20,7 @@ import type {
   TaskDetailOrInvalid,
   TaskFilter,
   TaskSummaryOrInvalid,
+  LibraryResource,
   UpdateProjectRequest,
 } from "@AiDailyTasks/shared";
 
@@ -71,7 +74,7 @@ async function parseBody(res: Response): Promise<unknown> {
   return res.text().catch(() => undefined);
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, init);
   if (!res.ok) {
     const body = await parseBody(res);
@@ -83,6 +86,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 function buildTaskQuery(filter: TaskFilter): string {
   const p = new URLSearchParams();
+  filter.priority?.forEach(v=>p.append("priority",v));
+  for (const key of ["next_action_owner","next_action_date_from","next_action_date_to","has_next_action","action_undated","include_closed"] as const) if(filter[key] !== undefined) p.set(key,String(filter[key]));
   if (filter.project) p.set("project", filter.project);
   filter.status?.forEach((s) => p.append("status", s));
   filter.category?.forEach((c) => p.append("category", c));
@@ -249,6 +254,36 @@ export function deleteAttachment(id: string, name: string): Promise<void> {
     { method: "DELETE" },
   );
 }
+
+export function getObservations(
+  id: string,
+  cursor: string,
+  limit = 20,
+): Promise<ObservationPage> {
+  const params = new URLSearchParams({ cursor, limit: String(limit) });
+  return request<ObservationPage>(`/tasks/${encodeURIComponent(id)}/observations?${params}`);
+}
+
+export function uploadResourceFiles(id: string, files: File[]): Promise<{ files: Attachment[] }> {
+  const form = new FormData();
+  for (const file of files) form.append("files", file, file.name);
+  return request<{ files: Attachment[] }>(`/tasks/${encodeURIComponent(id)}/resources/files`, {
+    method: "POST",
+    body: form,
+  });
+}
+
+export function deleteResourceFile(id: string, name: string): Promise<void> {
+  return request<void>(`/tasks/${encodeURIComponent(id)}/resources/files/${encodeURIComponent(name)}`, {
+    method: "DELETE",
+  });
+}
+
+export function getLibraryResources(): Promise<{ resources: LibraryResource[] }> { return request("/resources"); }
+export function createLibraryResource(body: CreateLibraryResource): Promise<{ resource: LibraryResource }> { return request("/resources", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); }
+export function updateLibraryResource(id: string, body: Partial<CreateLibraryResource>): Promise<{ resource: LibraryResource }> { return request(`/resources/${encodeURIComponent(id)}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); }
+export function deleteLibraryResource(id: string): Promise<void> { return request(`/resources/${encodeURIComponent(id)}`, { method: "DELETE" }); }
+export function uploadLibraryResourceFile(id: string, file: File): Promise<{ resource: LibraryResource }> { const form = new FormData(); form.append("file", file, file.name); return request(`/resources/${encodeURIComponent(id)}/file`, { method: "POST", body: form }); }
 
 /** Absolute API url for an attachment (matches Attachment.url shape). */
 export function attachmentUrl(id: string, name: string): string {

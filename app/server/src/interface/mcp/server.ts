@@ -1,3 +1,4 @@
+import { StatusMigrationSchema } from "../../application/statusMigration";
 /**
  * Builds the AiDailyTasks MCP server: exposes the board's application services as MCP
  * tools so an agent can read/create/update tasks, manage projects, and inspect the
@@ -12,12 +13,15 @@ import type { ReadStream } from "node:fs";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
-  CreateRequestSchema,
+  CreateRequestSchema, PatchRequestSchema, EditableFieldsSchema, ObservationRequestSchema,
+  ChangesFilterSchema, CommunicationFilterSchema, CommunicationMutationSchema, NextActionSchema, VerificationSchema,
+  blockerExcerpt,
   TaskFilterSchema,
   normalizeId,
   type EditableFields,
   type PatchRequest,
   type TaskDetailOrInvalid,
+  TaskResourceSchema,
 } from "@AiDailyTasks/shared";
 import type { Services } from "../http/routes";
 
@@ -46,6 +50,11 @@ async function collectStream(stream: ReadStream): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
+function compactObservation(o: import("@AiDailyTasks/shared").Observation) {
+  const {changes,verification_evidence,...note}=o;
+  return {...note,markdown:o.markdown.slice(0,1000),verification_evidence:verification_evidence?.slice(0,1000),fields:changes ? Object.keys(changes) : undefined,truncated:o.markdown.length > 1000 || (verification_evidence?.length ?? 0) > 1000 || !!changes,detail_reference:o.id};
+}
+
 function ok(data: unknown): ToolResult {
   const text = typeof data === "string" ? data : JSON.stringify(data, null, 2);
   return { content: [{ type: "text", text }] };
@@ -56,16 +65,26 @@ function fail(message: string): ToolResult {
 
 /** Names + one-liners for the registered tools — surfaced by GET /api/mcp-info for the Connect page. */
 export const MCP_TOOL_SUMMARY: { name: string; description: string }[] = [
-  { name: "list_tasks", description: "List board tasks (summaries) with optional filters." },
-  { name: "get_task", description: "Read one task in full; may include a ready-Graphify study hint." },
-  { name: "create_task", description: "Create a task; the id is auto-assigned." },
-  { name: "update_task", description: "Patch a task's fields and/or summary/scope/QA notes." },
+  { name: "migrate_status_alias", description: "Preview/apply the Depricated to Cancelled repair, or resume/rollback a journal." },
+  { name: "list_changes", description: "Read a fixed window of cross-task activity; follow every next_cursor." },
+  { name: "list_communications", description: "List recorded drafts, sent messages and items awaiting reply; no messages are sent." },
+  { name: "get_communication", description: "Read a full recorded communication body." },
+  { name: "add_communication", description: "Record a communication locally with baseRev and an optional retry-safe item_id." },
+  { name: "update_communication", description: "Update a recorded communication with baseRev; sends nothing." },
+  { name: "list_tasks", description: "List board tasks with optional filters and short blocker excerpts; get_task returns full blocker Markdown." },
+  { name: "get_task", description: "Read one task with its latest observation page; may include a ready code-graph usage hint." },
+  { name: "list_observations", description: "Read a bounded page of a task's observation history." },
+  { name: "create_task", description: "Create a task, optionally with blocker Markdown; the id is auto-assigned." },
+  { name: "update_task", description: "Patch task fields/content. Set blocker Markdown to record a blocker; set blocker to an empty string to resolve with automatic history." },
   { name: "delete_task", description: "Permanently delete an archived task after revision confirmation." },
   { name: "add_observation", description: "Append a timestamped note to a task's Observations log." },
   { name: "list_attachments", description: "List the files attached to a task (name, size, mime, url)." },
   { name: "get_attachment", description: "Fetch one of a task's attachments by filename (image/text/base64)." },
   { name: "upload_attachment", description: "Upload a text or base64 file to a task." },
   { name: "delete_attachment", description: "Permanently delete one attachment from a task." },
+  { name: "upload_resource_file", description: "Upload a durable file used by a task resource." },
+  { name: "get_resource_file", description: "Fetch a durable task-resource file." },
+  { name: "delete_resource_file", description: "Delete a durable task-resource file." },
   { name: "archive_task", description: "Archive a task; completed recurring work creates one successor." },
   { name: "unarchive_task", description: "Restore an archived task." },
   { name: "list_projects", description: "List configured projects (id, label, source root)." },
@@ -76,6 +95,7 @@ export const MCP_TOOL_SUMMARY: { name: string; description: string }[] = [
   { name: "get_project_documentation", description: "Get project details, agent instructions, and imported README." },
   { name: "update_project_documentation", description: "Save project-specific Markdown instructions for people and agents." },
   { name: "import_project_readme", description: "Copy a project's root README into its private documentation store." },
+  { name: "get_storage_info", description: "Inspect active board data paths and instructions for relocation." },
   { name: "get_config", description: "Board vocabulary: statuses, categories, severities, risks, projects." },
   { name: "update_config", description: "Update local board vocabulary and workspace visibility preferences." },
   { name: "get_graph", description: "Task relationship graph (depends_on / blocks / relates_to / parent)." },
@@ -94,10 +114,49 @@ const CONFLICT_MSG =
   "Conflict: the task changed on disk since it was read. Re-read the task and retry with its current rev.";
 
 export function buildMcpServer(services: Services, version = "1.0.0"): McpServer {
-  const server = new McpServer({ name: "AiDailyTasks", version });
+  const server = new McpServer({ name: "AiDailyTasks", version }, {
+    instructions: "When task work cannot proceed because information, approval, access, or an external dependency is missing, " +
+      "record the current situation using update_task's top-level blocker argument. This Markdown appears in the Blocker tab. " +
+      "Start with a short reason, then document evidence, attempted actions, the exact question/approval needed and who can resolve it when known. " +
+      "Read get_task first and pass its rev as baseRev; blocker replaces the full current text, so preserve still-relevant details. " +
+      "Example: update_task({id:'C123', baseRev:CURRENT_REV, blocker:'Waiting for approval.\n\n## Context\nMigration is ready.\n\n## Needed to unblock\nApprove the migration plan.'}). " +
+      "create_task accepts blocker too. list_tasks returns only an excerpt; get_task returns the full Markdown. " +
+      "Once resolved, call update_task({id:'C123', baseRev:CURRENT_REV, blocker:''}). " +
+      "Omit blocker to leave it unchanged. Do not write blocked_since yourself. " +
+      "The server records start/update/resolution observations automatically, including full details and dates; do not duplicate them with add_observation. " +
+      "A blocker records a pending decision; it does not grant approval or change task status.",
+  });
   // One McpServer instance is created per HTTP session (and once per stdio process),
   // so this keeps the advisory useful without repeating it on every task read.
   const graphifyHintsShown = new Set<string>();
+
+  server.registerTool("migrate_status_alias", { description:"Preview the Depricated -> Cancelled repair. Apply requires the reviewed preview_hash. Backups/journals are task attachments; use operation_id to resume or rollback. Stop direct file writers.",inputSchema:StatusMigrationSchema.shape },async args=>{
+    try{return ok(await services.statusMigration.run(StatusMigrationSchema.parse(args)));}catch(err){return fail((err as Error).message);}
+  });
+  server.registerTool("list_changes", {
+    description: "Chronological activity in (since, until]. Follow next_cursor using identical filters. Expired cursors require restarting. Observation IDs retrieve full evidence using list_observations. Current fields are current context; coverage describes historical limits.",
+    inputSchema: ChangesFilterSchema.innerType().shape,
+  }, async args => {
+    try { return ok(await services.workflow.listChanges(ChangesFilterSchema.parse(args))); }
+    catch (err) { return fail((err as Error).message); }
+  });
+  server.registerTool("list_communications", { description: "Local communication records. awaiting_reply=true selects sent items still waiting; archived items included by default. Follow next_cursor.", inputSchema: CommunicationFilterSchema.shape }, async args => {
+    try { return ok(await services.workflow.listCommunications(CommunicationFilterSchema.parse(args))); }
+    catch (err) { return fail((err as Error).message); }
+  });
+  server.registerTool("get_communication", { description: "Read one full local communication; no external send.", inputSchema: { id:z.string(), item_id:z.string() } }, async ({id,item_id}) => {
+    try { return ok(await services.workflow.getCommunication(id,item_id)); } catch (err) { return fail((err as Error).message); }
+  });
+  for (const create of [true,false]) server.registerTool(create ? "add_communication" : "update_communication", {
+    description: "Record/update a local communication with exact baseRev. No external messages are sent. Reuse item_id with identical creation fields for a retry-safe creation.",
+    inputSchema: { ...CommunicationMutationSchema.shape, id:z.string() },
+  }, async ({id,...args}) => {
+    try {
+      const res = await services.tasks.communication(id,CommunicationMutationSchema.parse(args),create);
+      if (res.conflict) return { ...ok({ conflict:true,current_rev:res.current.rev,message:CONFLICT_MSG }),isError:true };
+      return ok({ id:res.task.id, rev:res.task.rev, communication_count:res.task.communication_count });
+    } catch (err) { return fail((err as Error).message); }
+  });
 
   // ── Read ───────────────────────────────────────────────────────────────────
   server.registerTool(
@@ -105,20 +164,8 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
     {
       title: "List tasks",
       description:
-        "List board tasks (summaries) with optional filters. Archived tasks are excluded by default.",
-      inputSchema: {
-        project: z.string().optional(),
-        status: z.array(z.string()).optional(),
-        category: z.array(z.string()).optional(),
-        severity: z.array(z.string()).optional(),
-        tag: z.string().optional(),
-        q: z.string().optional().describe("Full-text search over title/summary/scope"),
-        archived: z.enum(["exclude", "only", "include"]).optional(),
-        sort: z
-          .enum(["id", "title", "status", "severity", "risk", "category", "updated", "created", "completed", "project"])
-          .optional(),
-        order: z.enum(["asc", "desc"]).optional(),
-      },
+        "List board tasks with optional filters and short blocker excerpts. Use get_task for full blocker Markdown when blocker_truncated is true. Archived tasks are excluded by default.",
+      inputSchema: TaskFilterSchema.shape,
     },
     async (args) => {
       const parsed = TaskFilterSchema.safeParse(args);
@@ -130,6 +177,12 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
               id: t.id,
               title: t.title,
               status: t.status,
+              priority: t.priority, next_action: t.next_action,
+              status_freshness: t.status_freshness, status_detail_updated_at: t.status_detail_updated_at, latest_note_at: t.latest_note_at,
+              communication_counts: t.communication_counts,
+              blocker: blockerExcerpt(t.blocker),
+              blocker_truncated: t.blocker.length > 240,
+              blocked_since: t.blocked_since,
               category: t.category,
               severity: t.severity,
               project: t.project,
@@ -150,31 +203,32 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
     {
       title: "Get task",
       description:
-        "Read one task in full: frontmatter, summary, scope, observations, attachments. " +
-        "The first eligible read in a session may include a non-blocking Graphify study hint.",
+        "Read one task: frontmatter, summary, scope, reusable resources, the latest 20 observations, and attachments. " +
+        "The first eligible read in a session may include a non-blocking code-graph usage hint.",
       inputSchema: { id: z.string().describe("Task id, e.g. C09") },
     },
     async ({ id }) => {
-      const t = await services.tasks.get(id);
+      const t = await services.tasks.get(id, 20);
       if (!t.valid) return fail(`Task ${id} is invalid: ${t.parseError}`);
 
       const hintKey = t.project;
       let projectStudyHint: {
         label: string;
         project: string;
-        recommended_tool: "graphify_query";
+        recommended_tool: "query_code_graph";
         message: string;
       } | undefined;
       if (!graphifyHintsShown.has(hintKey) && (await services.codeGraph.hasReadyGraphify(t.project))) {
         graphifyHintsShown.add(hintKey);
         projectStudyHint = {
-          label: "Ready Graphify project context",
+          label: "Ready code graph",
           project: t.project,
-          recommended_tool: "graphify_query",
+          recommended_tool: "query_code_graph",
           message:
-            `A ready Graphify index is available for ${t.project}. Before substantial work, ` +
-            "consider graphify_query for a quick architecture study. This is advisory; no graph " +
-            "query or refresh has run.",
+            `A ready Graphify-backed code graph is available for ${t.project}. For a precise file or ` +
+            "symbol question, consider query_code_graph; use graphify_explain, graphify_path, or " +
+            "graphify_affected only when you already have an exact node label. Avoid broad " +
+            "graphify_query architecture questions. This is advisory; no graph query or refresh has run.",
         };
       }
 
@@ -187,6 +241,11 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
         risk: t.risk,
         status: t.status,
         status_detail: t.status_detail,
+        priority: t.priority, next_action: t.next_action,
+        status_freshness: t.status_freshness, status_detail_updated_at: t.status_detail_updated_at, latest_note_at: t.latest_note_at,
+        communication_count: t.communication_count, communication_page: t.communication_page,
+        blocker: t.blocker,
+        blocked_since: t.blocked_since,
         created: t.created,
         updated: t.updated,
         completed: t.completed,
@@ -214,10 +273,38 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
         rev: t.rev,
         summary: t.summaryMarkdown,
         scope: t.scopeMarkdown,
-        observations: t.observations,
+        qa: t.qa, verification: t.verification,
+        observations: t.observations.map(compactObservation),
+        observation_count: t.observationCount,
+        next_observation_cursor: t.nextObservationCursor,
         attachments: t.attachments.map((a) => ({ name: a.name, size: a.size, url: a.url })),
+        resources: t.resources,
+        resource_files: t.resourceFiles,
         ...(projectStudyHint ? { project_study_hint: projectStudyHint } : {}),
       });
+    },
+  );
+
+  server.registerTool(
+    "list_observations",
+    {
+      title: "List observations",
+      description: "Read one bounded chronological page of a task's observations. Pass next_cursor from get_task or a prior page to retrieve older notes.",
+      inputSchema: {
+        id: z.string().describe("Task id, e.g. C09"),
+        observation_id: z.string().optional().describe("Retrieve a full observation by stable ID, including evidence and field snapshots"),
+        cursor: z.string().optional().describe("Opaque cursor for older observations"),
+        limit: z.number().int().min(1).max(100).optional().describe("Page size; defaults to 20"),
+      },
+    },
+    async ({ id, cursor, limit, observation_id }) => {
+      try {
+        if (observation_id) return ok({ id: normalizeId(id), observations: [await services.tasks.observation(id, observation_id)], next_cursor: null });
+        const page = await services.tasks.listObservations(id, cursor, limit);
+        return ok({ id: normalizeId(id), ...page, observations:page.observations.map(compactObservation) });
+      } catch (err) {
+        return fail(`Cannot read observations for ${id}: ${(err as Error).message}`);
+      }
     },
   );
 
@@ -346,39 +433,70 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
     },
   );
 
+  server.registerTool(
+    "upload_resource_file",
+    {
+      title: "Upload resource file",
+      description: "Upload a durable reference file. Then add a kind=file resource with update_task.",
+      inputSchema: { id: z.string(), filename: z.string().min(1), text: z.string().optional(), base64: z.string().optional() },
+    },
+    async ({ id, filename, text, base64 }) => {
+      if ((text === undefined) === (base64 === undefined)) return fail("Provide exactly one of text or base64.");
+      const data = text !== undefined ? Buffer.from(text, "utf8") : Buffer.from(base64!, "base64");
+      if (data.byteLength > MAX_ATTACHMENT_BYTES) return fail(`Resource file is over the ${MAX_ATTACHMENT_BYTES}-byte MCP upload limit.`);
+      try {
+        const files = await services.resources.saveMany(id, [{ filename, data }]);
+        return ok({ id: normalizeId(id), file: files[0] });
+      } catch (err) { return fail(`Cannot upload resource file to ${id}: ${(err as Error).message}`); }
+    },
+  );
+
+  server.registerTool(
+    "get_resource_file",
+    {
+      title: "Get resource file",
+      description: "Fetch a durable task-resource file as text, image, or base64 content.",
+      inputSchema: { id: z.string(), name: z.string().min(1) },
+    },
+    async ({ id, name }) => {
+      try {
+        const file = await services.resources.read(id, name);
+        if (file.size > MAX_ATTACHMENT_BYTES) return fail(`Resource file is over the ${MAX_ATTACHMENT_BYTES}-byte inline limit.`);
+        const buffer = await collectStream(file.stream());
+        if (/^image\//.test(file.mime)) return { content: [{ type: "image", data: buffer.toString("base64"), mimeType: file.mime }] };
+        if (/^text\//.test(file.mime) || file.mime === "application/json") return { content: [{ type: "text", text: buffer.toString("utf8") }] };
+        return { content: [{ type: "resource", resource: { uri: `file:///${normalizeId(id)}/resources/${encodeURIComponent(name)}`, mimeType: file.mime, blob: buffer.toString("base64") } }] };
+      } catch (err) { return fail(`Resource file not found: ${name} (task ${id}) — ${(err as Error).message}`); }
+    },
+  );
+
+  server.registerTool(
+    "delete_resource_file",
+    {
+      title: "Delete resource file",
+      description: "Delete a resource file after removing its metadata reference with update_task.",
+      inputSchema: { id: z.string(), name: z.string().min(1), confirm: z.literal(true) },
+    },
+    async ({ id, name }) => {
+      try { await services.resources.delete(id, name); return ok({ id: normalizeId(id), deleted: name }); }
+      catch (err) { return fail(`Cannot delete resource file ${name} from ${id}: ${(err as Error).message}`); }
+    },
+  );
+
   // ── Write: tasks ─────────────────────────────────────────────────────────────
   server.registerTool(
     "create_task",
     {
       title: "Create task",
       description:
-        "Create a task. The id is auto-assigned unless an available explicit id is provided. Only title and category are required.",
-      inputSchema: {
-        id: z.string().optional().describe("Optional explicit task id, e.g. C99"),
-        title: z.string().min(1),
-        category: z.string().min(1),
-        project: z.string().optional(),
-        severity: z.string().min(1).optional(),
-        risk: z.string().min(1).optional(),
-        status: z.string().min(1).optional(),
-        status_detail: z.string().optional(),
-        summary: z.string().optional(),
-        scope: z.string().optional(),
-        qa: z.string().optional().describe("How to test this task (markdown '## QA' section); most tasks omit it"),
-        tags: z.array(z.string()).optional(),
-        skills: z.array(z.string()).optional().describe("Agent execution expectations, e.g. Senior frontend engineer"),
-        recurring: z.boolean().optional().describe("Create a new Backlog occurrence when completed and archived"),
-        depends_on: z.array(z.string()).optional(),
-        blocks: z.array(z.string()).optional(),
-        relates_to: z.array(z.string()).optional(),
-        parent: z.string().nullable().optional(),
-      },
+        "Create a task. The id is auto-assigned unless an available explicit id is provided. Only title and category are required. Optional blocker Markdown appears in the Blocker tab and automatically records its start; put the reason first, followed by evidence, attempts, and what is needed to unblock.",
+      inputSchema: CreateRequestSchema.strict(),
     },
     async (args) => {
       const parsed = CreateRequestSchema.safeParse(args);
       if (!parsed.success) return fail(`Invalid task: ${parsed.error.message}`);
       const task = await services.tasks.create(parsed.data);
-      return ok({ id: task.id, rev: task.rev, title: task.title, status: task.status });
+      return ok({ id: task.id, rev: task.rev, title: task.title, status: task.status, blocker: task.blocker, blocked_since: task.blocked_since });
     },
   );
 
@@ -387,45 +505,24 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
     {
       title: "Update task",
       description:
-        "Patch a task's fields and/or summary/scope/qa. Pass baseRev for optimistic concurrency; if omitted, the current rev is used.",
-      inputSchema: {
-        id: z.string(),
-        baseRev: z.number().optional(),
-        title: z.string().optional(),
-        status: z.string().min(1).optional(),
-        category: z.string().min(1).optional(),
-        severity: z.string().min(1).optional(),
-        risk: z.string().min(1).optional(),
-        project: z.string().optional(),
-        status_detail: z.string().optional(),
-        tags: z.array(z.string()).optional(),
-        skills: z.array(z.string()).optional(),
-        recurring: z.boolean().optional(),
-        depends_on: z.array(z.string()).optional(),
-        blocks: z.array(z.string()).optional(),
-        relates_to: z.array(z.string()).optional(),
-        parent: z.string().nullable().optional(),
-        summary: z.string().optional(),
-        scope: z.string().optional(),
-        qa: z.string().optional().describe("How to test this task ('## QA' section); empty string clears it"),
-      },
+        "Patch a task's fields and/or summary/scope/qa. Pass baseRev from get_task for optimistic concurrency; if omitted, the current rev is used. " +
+        "To add or edit the Blocker tab, pass top-level blocker with the full Markdown (not body.blocker or an observation). " +
+        "It replaces existing blocker text. Include a short reason, context/evidence, attempted actions, and the exact missing information or approval. " +
+        "Omitting blocker leaves it unchanged; blocker: \"\" resolves it. The server maintains blocked_since and automatically logs start, edits and resolution with full details and dates. No separate add_observation call is needed.",
+      inputSchema: z.object({
+        ...EditableFieldsSchema.shape, id: z.string(), baseRev: z.number().optional().describe("Current get_task revision; HTTP requires this, MCP resolves it if omitted"),
+        summary: z.string().optional(), scope: z.string().optional(), qa: z.string().optional(), verification: z.string().optional(),
+      }).strict(),
     },
     async (args) => {
-      const { id, baseRev, summary, scope, qa, ...fields } = args;
+      const { id, baseRev, ...patch } = args;
       const rev = await resolveRev(services, id, baseRev);
       if (rev === null) return fail(`Task ${id} not found or invalid.`);
-      const editable = fields as EditableFields;
-      const body: PatchRequest = {
-        baseRev: rev,
-        fields: Object.keys(editable).length > 0 ? editable : undefined,
-        body:
-          summary !== undefined || scope !== undefined || qa !== undefined
-            ? { summary, scope, qa }
-            : undefined,
-      };
-      const res = await services.tasks.patch(id, body);
-      if (res.conflict) return fail(CONFLICT_MSG);
-      return ok({ id: res.task.id, rev: res.task.rev, status: res.task.status, updated: res.task.updated });
+      const parsed = PatchRequestSchema.safeParse({ ...patch, baseRev: rev });
+      if (!parsed.success) return fail(parsed.error.message);
+      const res = await services.tasks.patch(id, parsed.data);
+      if (res.conflict) return { ...ok({ conflict: true, current_rev: res.current.rev, message: CONFLICT_MSG }), isError: true };
+      return ok({ id: res.task.id, rev: res.task.rev, status: res.task.status, updated: res.task.updated, blocker: res.task.blocker, blocked_since: res.task.blocked_since });
     },
   );
 
@@ -434,23 +531,18 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
     {
       title: "Add observation",
       description: "Append a timestamped note under a task's Observations log.",
-      inputSchema: {
-        id: z.string(),
-        text: z.string().min(1),
-        author: z.string().optional().describe('Defaults to "claude"'),
-        baseRev: z.number().optional(),
-      },
+      inputSchema: { ...ObservationRequestSchema.shape, id: z.string(), baseRev: z.number().optional(), author: z.string().optional() },
     },
-    async ({ id, text, author, baseRev }) => {
+    async ({ id, text, author, baseRev, at, verification, verification_evidence }) => {
       const rev = await resolveRev(services, id, baseRev);
       if (rev === null) return fail(`Task ${id} not found or invalid.`);
       const res = await services.tasks.addObservation(id, {
         baseRev: rev,
         author: author ?? "claude",
-        text,
+        text, at, verification, verification_evidence,
       });
-      if (res.conflict) return fail(CONFLICT_MSG);
-      return ok({ id: res.task.id, rev: res.task.rev, observationCount: res.task.observations.length });
+      if (res.conflict) return { ...ok({ conflict: true, current_rev: res.current.rev, message: CONFLICT_MSG }), isError: true };
+      return ok({ id: res.task.id, rev: res.task.rev, observationCount: res.task.observationCount, observation: res.task.observations.at(-1), status_freshness: res.task.status_freshness });
     },
   );
 
@@ -470,7 +562,7 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
     async ({ id, baseRev }) => {
       try {
         const res = await services.tasks.delete(id, baseRev);
-        if (res.conflict) return fail(CONFLICT_MSG);
+        if (res.conflict) return { ...ok({ conflict: true, current_rev: res.current.rev, message: CONFLICT_MSG }), isError: true };
         return ok({ id: res.id, deleted: true });
       } catch (err) {
         return fail(`Cannot delete task ${id}: ${(err as Error).message}`);
@@ -488,7 +580,7 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
     },
     async ({ id, baseRev }) => {
       const res = await services.tasks.archive(id, baseRev);
-      if (res.conflict) return fail(CONFLICT_MSG);
+      if (res.conflict) return { ...ok({ conflict: true, current_rev: res.current.rev, message: CONFLICT_MSG }), isError: true };
       return ok({
         id: res.task.id,
         archived: res.task.archived,
@@ -509,7 +601,7 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
     },
     async ({ id, baseRev }) => {
       const res = await services.tasks.unarchive(id, baseRev);
-      if (res.conflict) return fail(CONFLICT_MSG);
+      if (res.conflict) return { ...ok({ conflict: true, current_rev: res.current.rev, message: CONFLICT_MSG }), isError: true };
       return ok({ id: res.task.id, archived: res.task.archived, rev: res.task.rev });
     },
   );
@@ -615,6 +707,16 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
         return fail(`Cannot delete project ${id}: ${(err as Error).message}`);
       }
     },
+  );
+
+  server.registerTool(
+    "get_storage_info",
+    {
+      title: "Get board storage location",
+      description: "Read the active data root and board/project/config paths before direct file access. Includes configuration and safe offline relocation instructions. Does not move data or change storage.",
+      annotations: { readOnlyHint: true },
+    },
+    async () => ok(services.storageInfo()),
   );
 
   server.registerTool(
@@ -939,9 +1041,9 @@ export function buildMcpServer(services: Services, version = "1.0.0"): McpServer
     {
       title: "Graphify: query",
       description:
-        "Ask a natural-language question about the codebase; graphify does a token-budgeted BFS over its " +
-        "knowledge graph and returns the relevant subgraph/answer. Far cheaper than reading files. " +
-        "Requires the project's indexer to be 'graphify' and a graph to have been generated.",
+        "Run Graphify's token-budgeted BFS over a narrowly phrased question with distinctive symbol names. " +
+        "Broad architecture questions can return noisy, truncated traversals; prefer query_code_graph for " +
+        "precise file/symbol lookup. Requires the project's indexer to be 'graphify' and a graph to have been generated.",
       inputSchema: {
         project: z.string().describe("Project id, e.g. my-app"),
         question: z.string().min(1).describe("e.g. 'how does authentication work?'"),
@@ -1016,7 +1118,7 @@ async function resolveRev(
   if (baseRev !== undefined) return baseRev;
   let current: TaskDetailOrInvalid;
   try {
-    current = await services.tasks.get(id);
+    current = await services.tasks.get(id, 1);
   } catch {
     return null;
   }

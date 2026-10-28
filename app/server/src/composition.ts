@@ -1,3 +1,5 @@
+import { StatusMigrationService } from "./application/statusMigration";
+import { WorkflowService } from "./application/workflow";
 /**
  * Shared composition root: wires config + repository + services over the board/
  * filesystem. Used by BOTH the HTTP server (main.ts) and the stdio MCP entrypoint
@@ -6,6 +8,7 @@
  * HTTP-only concerns (Fastify, SSE hub, watcher, config-file watching) stay in main.ts.
  */
 import fs from "node:fs/promises";
+import path from "node:path";
 import { ConfigService } from "./config";
 import { ProjectsService } from "./projects";
 import { RecentWrites } from "./infrastructure/recentWrites";
@@ -16,7 +19,9 @@ import {
   AttachmentService,
   GraphService,
   ExportService,
+  LibraryResourceService,
 } from "./application/services";
+import { LibraryResourceStore } from "./infrastructure/libraryResourceStore";
 import { CodeGraphService } from "./application/codeGraphService";
 import { ProjectDocumentationService } from "./application/projectDocumentationService";
 import type { Services } from "./interface/http/routes";
@@ -28,6 +33,8 @@ export interface Core {
   projects: ProjectsService;
   recentWrites: RecentWrites;
   attachmentStore: AttachmentStore;
+  resourceStore: AttachmentStore;
+  libraryStore: LibraryResourceStore;
   repo: FsTaskRepository;
   services: Services;
 }
@@ -42,20 +49,40 @@ export async function buildCore(env: Env, bus: EventBus): Promise<Core> {
   const config = new ConfigService(env);
   const recentWrites = new RecentWrites();
   const attachmentStore = new AttachmentStore(env);
-  const repo = new FsTaskRepository(env, config, attachmentStore, bus, recentWrites);
+  const resourceStore = new AttachmentStore(env, "resources", "resources/files");
+  const libraryStore = new LibraryResourceStore(env);
+  const repo = new FsTaskRepository(env, config, attachmentStore, resourceStore, bus, recentWrites);
   const projects = new ProjectsService(env, bus);
   await projects.ensureFile();
 
+  const workflow = new WorkflowService(repo);
   const services: Services = {
+    workflow,
+    statusMigration: new StatusMigrationService(env, config, repo),
+    storageInfo: () => ({
+      applicationRoot: env.root,
+      dataRoot: path.dirname(env.boardDir),
+      boardDir: env.boardDir,
+      exportsDir: env.exportsDir,
+      graphsDir: env.graphsDir,
+      projectDocsDir: env.projectDocsDir,
+      configPath: env.configPath,
+      projectsPath: env.projectsPath,
+      storageSettingsPath: path.join(env.root, "storage.local.json"),
+      environmentOverride: "AIDAILYTASKS_DATA_ROOT",
+      relocation: "Stop HTTP and all stdio writers. Copy board, exports, graphs, project-docs, board.config.json and projects.json to an existing destination directory. Set dataRoot in storage.local.json (the environment override takes precedence). Restart and reconnect all clients; refresh generated stdio configs from Connect. Verify the copy before removing originals. This tool is read-only; it does not move files or switch running processes.",
+    }),
     config,
     projects,
-    tasks: new TaskService(repo),
+    tasks: new TaskService(repo, workflow),
     attachments: new AttachmentService(attachmentStore, repo, bus),
+    resources: new AttachmentService(resourceStore, repo, bus),
+    library: new LibraryResourceService(libraryStore),
     graph: new GraphService(repo),
     codeGraph: new CodeGraphService(env, projects, bus),
     projectDocumentation: new ProjectDocumentationService(env, projects),
     exports: new ExportService(env, repo),
   };
 
-  return { config, projects, recentWrites, attachmentStore, repo, services };
+  return { config, projects, recentWrites, attachmentStore, resourceStore, libraryStore, repo, services };
 }

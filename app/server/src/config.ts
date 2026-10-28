@@ -1,11 +1,16 @@
+import { StorageGate } from "./infrastructure/storageGate";
+import { TaskFileStore } from "./infrastructure/taskFileStore";
+import { RecentWrites } from "./infrastructure/recentWrites";
+import { readdir } from "node:fs/promises";
 /**
  * Loads and validates board.config.json into a BoardConfig, and exposes derived
  * lookups (value sets, status order, level rank, colors). Cached, with reload().
  */
-import { copyFileSync, constants, readFileSync } from "node:fs";
+import { copyFileSync, constants, readFileSync, statSync } from "node:fs";
 import { rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
+import { DEFAULT_PRIORITIES } from "@AiDailyTasks/shared";
 import {
   type BoardConfig,
   STATUS_ORDER,
@@ -28,6 +33,8 @@ const BoardConfigSchema = z.object({
   idPrefix: z.string(),
   idPad: z.number(),
   statuses: z.array(EnumDefSchema),
+  priorities: z.array(EnumDefSchema).default(DEFAULT_PRIORITIES),
+  statusAliases: z.record(z.string()).default({}),
   categories: z.array(EnumDefSchema),
   severities: z.array(EnumDefSchema),
   risks: z.array(EnumDefSchema),
@@ -58,8 +65,20 @@ function assertProtectedStatuses(ids: string[]): void {
   }
 }
 
+function validateWorkflow(config: BoardConfig) {
+  const priorities = config.priorities ?? DEFAULT_PRIORITIES;
+  assertUnique("priorities",priorities.map(p=>p.id));
+  if (!priorities.some(p=>p.id === "Normal")) throw new Error("Priorities must retain the Normal default");
+  const ids=config.statuses.map(s=>s.id), aliases=config.statusAliases ?? {};
+  for (const [source,target] of Object.entries(aliases)) {
+    if (!source.trim() || ["Backlog","Completed"].includes(source) || ids.includes(source) || source === target || target in aliases || !ids.includes(target)) throw new Error(`Invalid status alias: ${source} -> ${target}`);
+  }
+}
+
 export class ConfigService {
+  readonly gate: StorageGate;
   private config: BoardConfig;
+  private configStamp = "";
   private statusColors = new Map<string, string>();
   private categoryColors = new Map<string, string>();
   private severityColors = new Map<string, string>();
@@ -67,6 +86,7 @@ export class ConfigService {
   private statusOrders = new Map<string, number>();
 
   constructor(private readonly env: Env) {
+    this.gate = new StorageGate(env.boardDir);
     this.ensureLocalConfig();
     this.config = this.loadAndValidate();
   }
@@ -93,7 +113,9 @@ export class ConfigService {
       );
     }
     const parsed = BoardConfigSchema.parse(JSON.parse(raw));
+    const stamp=statSync(this.env.configPath); this.configStamp=`${stamp.mtimeMs}:${stamp.size}:${stamp.ino}`;
 
+    validateWorkflow(parsed);
     assertUnique("statuses", parsed.statuses.map((s) => s.id));
     assertUnique("categories", parsed.categories.map((s) => s.id));
     assertUnique("severities", parsed.severities.map((s) => s.id));
@@ -120,7 +142,23 @@ export class ConfigService {
   }
 
   async update(input: unknown): Promise<BoardConfig> {
+    return this.gate.run(()=>this.updateLocked(input));
+  }
+  private async updateLocked(input: unknown): Promise<BoardConfig> {
+    // Another HTTP/stdio writer may have added priorities since this instance read them.
+    // Refresh inside the shared write gate before deciding which values are removed.
+    this.reload();
     const parsed = BoardConfigSchema.parse({ ...(input as object), projects: [] });
+    validateWorkflow(parsed);
+    const removed=(this.config.priorities ?? []).filter(p=>!parsed.priorities.some(n=>n.id === p.id)).map(p=>p.id);
+    if (removed.length) {
+      const store=new TaskFileStore(this.env.boardDir,this.env.taskStore,new RecentWrites());
+      for(const id of await readdir(this.env.boardDir)) if(/^C\d+$/.test(id)) {
+        const doc=await store.loadDocument(id);
+        if(!doc.ok) throw new Error(`Resolve invalid task ${id} before removing priorities`);
+        if(removed.includes(doc.frontmatter.priority)) throw new Error(`Priority ${doc.frontmatter.priority} is used by ${id}; assign a replacement first`);
+      }
+    }
     const ids = (defs: { id: string }[]) => defs.map((item) => item.id);
     assertUnique("statuses", ids(parsed.statuses));
     assertUnique("categories", ids(parsed.categories));
@@ -143,6 +181,8 @@ export class ConfigService {
   }
 
   get(): BoardConfig {
+    const stamp=statSync(this.env.configPath);
+    if (`${stamp.mtimeMs}:${stamp.size}:${stamp.ino}` !== this.configStamp) this.reload();
     return this.config;
   }
 

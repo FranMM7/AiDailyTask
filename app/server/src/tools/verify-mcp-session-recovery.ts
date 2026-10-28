@@ -44,7 +44,8 @@ async function startServer(root: string, port: number): Promise<RunningServer> {
   let logs = "";
   const child = spawn(process.execPath, [tsxCli, "src/main.ts"], {
     cwd: serverCwd,
-    env: { ...process.env, PORT: String(port), AiDailyTasks_ROOT: root },
+    env: { ...process.env, PORT: String(port), AiDailyTasks_ROOT: repoRoot, AIDAILYTASKS_DATA_ROOT: root },
+    windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
   });
   child.stdout?.on("data", (chunk) => { logs += String(chunk); });
@@ -149,7 +150,7 @@ const baseUrl = `http://127.0.0.1:${port}`;
 let server: RunningServer | undefined;
 
 try {
-  await copyFile(path.join(repoRoot, "board.config.json"), path.join(testRoot, "board.config.json"));
+  await copyFile(path.join(repoRoot, "board.config.json.template"), path.join(testRoot, "board.config.json"));
   server = await startServer(testRoot, port);
   const firstPid = (await readHealth(baseUrl)).pid;
 

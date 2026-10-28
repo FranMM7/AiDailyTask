@@ -1,5 +1,6 @@
+import { FreshnessLabel } from "./WorkflowPanels";
 import { Paperclip, MessageSquare, AlertTriangle, Repeat2 } from "lucide-react";
-import type { TaskSummaryOrInvalid } from "@AiDailyTasks/shared";
+import { blockerExcerpt, type TaskSummaryOrInvalid } from "@AiDailyTasks/shared";
 import { useConfig } from "@/api/hooks";
 import { useUiStore } from "@/store/ui";
 import { categoryColor, severityColor } from "@/lib/colors";
@@ -54,6 +55,9 @@ export function TaskCard({ task }: { task: TaskSummaryOrInvalid }) {
         <LevelBadge kind="severity" level={task.severity} />
       </div>
 
+      <FreshnessLabel freshness={task.status_freshness} />
+      {task.next_action && <div className="mt-2 text-xs"><strong>{task.priority} · Next:</strong> {task.next_action.text}<div>{task.next_action.owner || "Unassigned"} · {task.next_action.due_date || "Undated"}</div></div>}
+      {task.blocker ? <div className="mt-2 line-clamp-2 break-words text-xs text-amber-700 dark:text-amber-300" title={task.blocked_since ? `Blocked since ${task.blocked_since}` : undefined}><strong>Blocked:</strong> {blockerExcerpt(task.blocker)}</div> : null}
       {task.status_detail ? (
         <div className="mt-2 line-clamp-1 text-xs italic text-slate-500">{task.status_detail}</div>
       ) : null}

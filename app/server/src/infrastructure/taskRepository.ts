@@ -1,17 +1,23 @@
+import { createHash } from "node:crypto";
+import { newObservationId } from "../domain/structuredTask";
+import { StorageGate } from "./storageGate";
+import { CommunicationSchema, CommunicationFieldsSchema, type CommunicationMutation, type Communication, statusFreshness } from "@AiDailyTasks/shared";
 /**
- * Filesystem-backed task repository over board/. Handles reads, listing,
- * create/patch/observation with optimistic concurrency (rev = task.md mtimeMs)
- * and atomic writes (temp sibling + rename). Per-id + allocation mutexes serialize
- * mutations. Writes register their mtime in RecentWrites so the watcher can
- * suppress self-echoes.
+ * Task repository over board/. Handles reads, listing, create/patch/observation
+ * with optimistic concurrency and atomic writes. Per-id + allocation mutexes
+ * serialize mutations. Writes register their mtime in RecentWrites so the
+ * watcher can suppress self-echoes.
+ *
+ * The on-disk format (legacy task.md vs structured task.json +
+ * observations.jsonl) is entirely TaskFileStore's concern. Nothing below reads
+ * or writes a task file directly, so the two formats cannot drift in behaviour.
  */
 import fs from "node:fs/promises";
-import { Stats } from "node:fs";
 import path from "node:path";
 import { Mutex } from "async-mutex";
-import { nanoid } from "nanoid";
 import {
   type Frontmatter,
+  type Observation,
   type TaskDetail,
   type TaskDetailOrInvalid,
   type TaskSummaryOrInvalid,
@@ -19,21 +25,24 @@ import {
   type CreateRequest,
   type PatchRequest,
   type ObservationRequest,
+  type ObservationPage,
   padId,
   idNum,
   normalizeId,
   ID_PATTERN,
 } from "@AiDailyTasks/shared";
 import {
-  parseTaskFile,
-  serializeTaskFile,
   setSection,
   getSection,
-  parseObservations,
-  toTaskDetail,
+  buildTaskDetail,
   toTaskSummary,
   type ParsedBody,
 } from "../domain/task";
+import {
+  TaskFileStore,
+  TaskNotFoundInStoreError,
+  type TaskDocument,
+} from "./taskFileStore";
 import type { ConfigService } from "../config";
 import type { AttachmentStore } from "./attachmentStore";
 import type { EventBus } from "./eventBus";
@@ -43,33 +52,8 @@ import { NotFoundError, ValidationError } from "../errors";
 
 const ID_DIR_RE = /^C\d+$/;
 
-/** Scalar frontmatter fields whose manual (web-UI) changes get logged to Observations. */
-const TRACKED_FIELDS: Array<[keyof Frontmatter, string]> = [
-  ["status", "status"],
-  ["status_detail", "status detail"],
-  ["severity", "severity"],
-  ["risk", "risk"],
-  ["category", "category"],
-  ["project", "project"],
-  ["title", "title"],
-  ["recurring", "recurring"],
-];
-
-function fmtVal(v: unknown): string {
-  const s = v == null ? "" : String(v);
-  return s.trim() === "" ? "(none)" : s;
-}
-
-/** Human-readable list of changed tracked fields, e.g. ["status: In progress → Completed"]. */
-function describeFieldChanges(before: Frontmatter, after: Frontmatter): string[] {
-  const out: string[] = [];
-  for (const [key, label] of TRACKED_FIELDS) {
-    if (String(before[key] ?? "") !== String(after[key] ?? "")) {
-      out.push(`${label}: ${fmtVal(before[key])} → ${fmtVal(after[key])}`);
-    }
-  }
-  return out;
-}
+/** Matches the default limit on GET /api/tasks/:id so both paths agree. */
+const DEFAULT_OBSERVATION_PAGE = 20;
 
 export interface PatchOutcome {
   conflict: false;
@@ -87,30 +71,86 @@ export type DeleteResult = { conflict: false; id: string } | ConflictOutcome;
 export class FsTaskRepository {
   private locks = new Map<string, Mutex>();
   private allocationLock = new Mutex();
+  private readonly store: TaskFileStore;
+  readonly gate: StorageGate;
 
   constructor(
     private readonly env: Env,
     private readonly config: ConfigService,
     private readonly attachments: AttachmentStore,
+    private readonly resourceFiles: AttachmentStore,
     private readonly bus: EventBus,
-    private readonly recentWrites: RecentWrites,
-  ) {}
+    recentWrites: RecentWrites,
+  ) {
+    this.gate = config.gate;
+    this.store = new TaskFileStore(env.boardDir, env.taskStore, recentWrites);
+  }
 
-  private lockFor(id: string): Mutex {
+  private lockFor(id: string) {
     const key = normalizeId(id);
     let m = this.locks.get(key);
     if (!m) {
       m = new Mutex();
       this.locks.set(key, m);
     }
-    return m;
+    return { runExclusive: <T>(fn: () => Promise<T>) => this.gate.run(() => m!.runExclusive(fn)) };
   }
 
   private taskDir(id: string): string {
-    return path.join(this.env.boardDir, normalizeId(id));
+    return this.store.dir(normalizeId(id));
   }
-  private taskFile(id: string): string {
-    return path.join(this.taskDir(id), "task.md");
+
+  /**
+   * Load a task's metadata and body, never its history. Throws NotFoundError so
+   * callers keep the error contract they had when this was a direct stat().
+   */
+  private async loadDocument(id: string): Promise<TaskDocument | InvalidTask> {
+    let doc;
+    try {
+      doc = await this.store.loadDocument(normalizeId(id));
+    } catch (err) {
+      if (err instanceof TaskNotFoundInStoreError) throw new NotFoundError(`Task ${normalizeId(id)} not found`);
+      throw err;
+    }
+    if (!doc.ok) return this.invalid(id, doc.rev, doc.error, doc.rawFrontmatter, doc.rawBody);
+    return { ...doc, frontmatter: this.normalizeFrontmatter({ ...doc.frontmatter, id: normalizeId(id) }) };
+  }
+
+  /** Current revision, or NotFoundError. */
+  canonicalStatus(status: string): string { return this.config.get().statusAliases?.[status] ?? status; }
+  priorityRank(priority: string): number { return this.config.get().priorities?.find(p => p.id === priority)?.rank ?? 2; }
+  private normalizeFrontmatter(fm: Frontmatter): Frontmatter {
+    const hash = createHash("sha256").update(fm.status_detail).digest("hex");
+    return { ...fm, status: this.canonicalStatus(fm.status), status_detail_updated_at: fm.status_detail_fingerprint === hash ? fm.status_detail_updated_at : null };
+  }
+  private validateStatusText(value: string): string {
+    const text = value.trim();
+    if (text.length > 600 || /\n\s*\n/.test(text)) throw new ValidationError("Current status must be one paragraph of at most 600 characters; put history in observations.");
+    return text;
+  }
+  private event(markdown: string, changes: NonNullable<Observation["changes"]>, event = "task.updated", extra: Partial<Observation> = {}): Observation {
+    const at = new Date().toISOString();
+    return { id: newObservationId(), at, recorded_at: at, author: "system", kind: "system", markdown, changes, event, ...extra };
+  }
+  async document(id: string): Promise<TaskDocument> {
+    const doc = await this.loadDocument(id);
+    if ("valid" in doc) throw new ValidationError(doc.parseError);
+    return doc;
+  }
+  async observation(id: string, observationId: string): Promise<Observation> {
+    const doc = await this.document(id);
+    const found = (await this.store.loadObservations(normalizeId(id), doc.format)).find(o => o.id === observationId);
+    if (!found) throw new NotFoundError("Observation not found");
+    return found;
+  }
+  async allObservations(id: string): Promise<Observation[]> {
+    const doc = await this.document(id);
+    return this.store.loadObservations(normalizeId(id), doc.format);
+  }
+  private async revOf(id: string): Promise<number> {
+    const rev = await this.store.rev(normalizeId(id));
+    if (rev === null) throw new NotFoundError(`Task ${normalizeId(id)} not found`);
+    return rev;
   }
 
   // ── Listing ────────────────────────────────────────────────────────────────
@@ -139,9 +179,8 @@ export class FsTaskRepository {
     const ids = await this.listIds();
     const rows = await Promise.all(ids.map(async (id): Promise<Frontmatter | null> => {
       try {
-        const raw = await fs.readFile(this.taskFile(id), "utf8");
-        const parsed = parseTaskFile(raw);
-        return parsed.ok ? { ...parsed.frontmatter, id: normalizeId(id) } : null;
+        const doc = await this.store.loadDocument(id);
+        return doc.ok ? { ...doc.frontmatter, id: normalizeId(id) } : null;
       } catch {
         return null;
       }
@@ -150,34 +189,27 @@ export class FsTaskRepository {
   }
 
   private async readSummary(id: string): Promise<TaskSummaryOrInvalid> {
-    const file = this.taskFile(id);
-    let raw: string;
-    let st: Stats;
+    let doc;
     try {
-      st = await fs.stat(file);
-      raw = await fs.readFile(file, "utf8");
+      doc = await this.store.loadDocument(id);
     } catch (err) {
-      return this.invalid(id, 0, `Cannot read task.md: ${(err as Error).message}`);
+      return this.invalid(id, 0, `Cannot read task ${normalizeId(id)}: ${(err as Error).message}`);
     }
-    const parsed = parseTaskFile(raw);
-    if (!parsed.ok) {
-      return this.invalid(id, st.mtimeMs, parsed.error, parsed.rawFrontmatter, parsed.rawBody);
-    }
-    const fm = { ...parsed.frontmatter, id: normalizeId(id) };
-    let attachmentCount = 0;
-    try {
-      attachmentCount = (await this.attachments.list(id)).length;
-    } catch {
-      /* ignore */
-    }
-    const observationCount = parseObservations(getSection(parsed.parsed, "Observations")).length;
+    if (!doc.ok) return this.invalid(id, doc.rev, doc.error, doc.rawFrontmatter, doc.rawBody);
+    const fm = this.normalizeFrontmatter({ ...doc.frontmatter, id: normalizeId(id) });
+    // Counting is deliberately separate from loading: the structured store counts
+    // lines without deserializing a single observation body.
+    const attachmentCount = await this.attachments
+      .list(id)
+      .then((list) => list.length)
+      .catch(() => 0);
     return toTaskSummary({
       fm,
-      rev: st.mtimeMs,
-      summaryMarkdown: getSection(parsed.parsed, "Summary"),
-      scopeMarkdown: getSection(parsed.parsed, "Scope"),
+      rev: doc.rev,
+      summaryMarkdown: getSection(doc.body, "Summary"),
+      scopeMarkdown: getSection(doc.body, "Scope"),
       attachmentCount,
-      observationCount,
+      observationCount: doc.observationCount,
     });
   }
 
@@ -192,52 +224,104 @@ export class FsTaskRepository {
   }
 
   // ── Read one ─────────────────────────────────────────────────────────────────
-  async read(id: string): Promise<TaskDetailOrInvalid> {
-    const file = this.taskFile(id);
-    let st: Stats;
-    let raw: string;
-    try {
-      st = await fs.stat(file);
-    } catch {
-      throw new NotFoundError(`Task ${normalizeId(id)} not found`);
-    }
-    raw = await fs.readFile(file, "utf8");
-    const parsed = parseTaskFile(raw);
-    if (!parsed.ok) {
-      return this.invalid(id, st.mtimeMs, parsed.error, parsed.rawFrontmatter, parsed.rawBody);
-    }
-    const fm = { ...parsed.frontmatter, id: normalizeId(id) };
-    const attachments = await this.attachments.list(id);
-    return toTaskDetail({ fm, rev: st.mtimeMs, parsed: parsed.parsed, rawBody: parsed.body, attachments });
+  async read(id: string, observationLimit?: number): Promise<TaskDetailOrInvalid> {
+    const doc = await this.loadDocument(id);
+    if ("valid" in doc) return doc;
+    const canonical = normalizeId(id);
+    const [attachments, resourceFiles, history] = await Promise.all([
+      this.attachments.list(canonical),
+      this.resourceFiles.list(canonical),
+      observationLimit === undefined
+        ? this.store
+            .loadObservations(canonical, doc.format)
+            .then((observations) => ({ observations, total: observations.length }))
+        : this.store.pageObservations(canonical, undefined, observationLimit),
+    ]);
+    return buildTaskDetail({
+      fm: doc.frontmatter,
+      rev: doc.rev,
+      summaryMarkdown: getSection(doc.body, "Summary"),
+      scopeMarkdown: getSection(doc.body, "Scope"),
+      qaMarkdown: getSection(doc.body, "QA"),
+      verificationMarkdown: getSection(doc.body, "Verification evidence"),
+      observations: history.observations,
+      observationCount: history.total,
+      attachments,
+      resourceFiles,
+      // rawBody is a diagnostic for tasks that FAILED to parse; a valid task is
+      // consumed through the structured fields above and no caller reads it.
+      // Populating it would mean rendering the whole task to Markdown on every
+      // read, including the read that follows every write.
+      rawBody: "",
+      paged: observationLimit !== undefined,
+    });
   }
 
-  /** Read requiring validity (used after our own writes). */
+  /** Read one bounded page without serializing the rest of a task's observation history. */
+  async listObservations(id: string, cursor?: string, limit = 20): Promise<ObservationPage> {
+    const doc = await this.loadDocument(id);
+    if ("valid" in doc) {
+      throw new ValidationError(`Cannot read observations for invalid task ${normalizeId(id)}: ${doc.parseError}`);
+    }
+    return this.store.pageObservations(normalizeId(id), cursor, limit);
+  }
+
+  /**
+   * Build the response for a write from what was just written, rather than
+   * reading the task back.
+   *
+   * Re-reading a file immediately after modifying it is the slowest read there
+   * is on Windows — the just-written file is exactly what a virus scanner has
+   * woken up to inspect — and the structured format modifies two files per
+   * write, so it paid that penalty twice. Every field is already known here;
+   * only the observation page and the attachment listings need the disk.
+   */
+  private async detailAfterWrite(
+    id: string,
+    fm: Frontmatter,
+    body: ParsedBody,
+    rev: number,
+    observationCount: number,
+  ): Promise<TaskDetail> {
+    const canonical = normalizeId(id);
+    const [attachments, resourceFiles, page] = await Promise.all([
+      this.attachments.list(canonical),
+      this.resourceFiles.list(canonical),
+      // The count is known from what was just written, so the page can be read
+      // straight off the end of the history.
+      this.store.pageObservations(canonical, undefined, DEFAULT_OBSERVATION_PAGE, observationCount),
+    ]);
+    return buildTaskDetail({
+      fm,
+      rev,
+      summaryMarkdown: getSection(body, "Summary"),
+      scopeMarkdown: getSection(body, "Scope"),
+      qaMarkdown: getSection(body, "QA"),
+      verificationMarkdown: getSection(body, "Verification evidence"),
+      observations: page.observations,
+      observationCount: page.total,
+      attachments,
+      resourceFiles,
+      rawBody: "",
+      paged: true,
+    });
+  }
+
+  /**
+   * Read requiring validity. Used when the task being read is not the one we
+   * just wrote. Bounded to the same page size the GET route defaults to.
+   */
   private async readDetailStrict(id: string): Promise<TaskDetail> {
-    const detail = await this.read(id);
+    const detail = await this.read(id, DEFAULT_OBSERVATION_PAGE);
     if (!detail.valid) {
       throw new Error(`Task ${normalizeId(id)} became invalid after write: ${detail.parseError}`);
     }
     return detail;
   }
 
-  // ── Atomic write ──────────────────────────────────────────────────────────────
-  private async atomicWrite(file: string, contents: string): Promise<Stats> {
-    const tmp = path.join(path.dirname(file), `task.md.tmp-${nanoid(8)}`);
-    await fs.writeFile(tmp, contents, "utf8");
-    try {
-      await fs.rename(tmp, file);
-    } catch (err) {
-      await fs.rm(tmp, { force: true });
-      throw err;
-    }
-    const st = await fs.stat(file);
-    this.recentWrites.add(file, st.mtimeMs);
-    return st;
-  }
-
   // ── Create ────────────────────────────────────────────────────────────────────
   async create(req: CreateRequest): Promise<TaskDetail> {
-    return this.createWithLineage(req, null);
+    return this.gate.run(() => this.createWithLineage(req, null));
   }
 
   private async createWithLineage(
@@ -245,10 +329,10 @@ export class FsTaskRepository {
     recurrenceOf: string | null,
   ): Promise<TaskDetail> {
     return this.allocationLock.runExclusive(async () => {
+      this.validateStatusText(req.status_detail);
+      if (!this.config.get().priorities?.some(p=>p.id === req.priority)) throw new ValidationError("Unknown priority");
       const id = await this.resolveNewId(req.id);
-      const dir = this.taskDir(id);
-      await fs.mkdir(dir, { recursive: true });
-      await fs.mkdir(path.join(dir, "files"), { recursive: true });
+      await this.store.createDirectories(id);
 
       const today = this.today();
       const fm: Frontmatter = {
@@ -258,8 +342,16 @@ export class FsTaskRepository {
         category: req.category,
         severity: req.severity,
         risk: req.risk,
-        status: req.status,
-        status_detail: req.status_detail,
+        status: this.canonicalStatus(req.status),
+        status_detail: this.validateStatusText(req.status_detail),
+        status_detail_updated_at: new Date().toISOString(),
+        status_detail_fingerprint: createHash("sha256").update(req.status_detail.trim()).digest("hex"),
+        latest_note_at: null,
+        priority: req.priority,
+        next_action: req.next_action,
+        communications: [],
+        blocker: req.blocker ?? "",
+        blocked_since: req.blocker ? new Date().toISOString() : null,
         created: today,
         updated: today,
         completed: req.status === "Completed" ? today : undefined,
@@ -274,6 +366,7 @@ export class FsTaskRepository {
         parent: req.parent,
         children: [],
         sources: [],
+        resources: req.resources,
       };
       const body: ParsedBody = {
         preamble: "",
@@ -282,11 +375,16 @@ export class FsTaskRepository {
           { heading: "Scope", content: req.scope.trim() },
           // QA is written only when provided — most tasks never need the section.
           ...(req.qa.trim() ? [{ heading: "QA", content: req.qa.trim() }] : []),
-          { heading: "Observations", content: "" },
+          ...(req.verification.trim() ? [{ heading: "Verification evidence", content: req.verification.trim() }] : []),
         ],
       };
-      await this.atomicWrite(this.taskFile(id), serializeTaskFile(fm, body));
-      const detail = await this.readDetailStrict(id);
+      const appendObservations: Observation[] = fm.blocker ? [this.event("Blocker started.", {blocker:{before:"",after:fm.blocker}}, "blocker.started", {started_at:fm.blocked_since})] : [];
+      const rev = await this.store.save(
+        id,
+        { frontmatter: fm, body, appendObservations, previousObservationCount: 0 },
+        await this.store.newTaskFormat(),
+      );
+      const detail = await this.detailAfterWrite(id, fm, body, rev, appendObservations.length);
       this.bus.publish({ type: "task.created", id, task: this.summaryFromDetail(detail) });
       return detail;
     });
@@ -296,13 +394,8 @@ export class FsTaskRepository {
     if (explicit) {
       if (!ID_PATTERN.test(explicit)) throw new ValidationError(`Invalid id: ${explicit}`);
       const norm = normalizeId(explicit, this.config.idPrefix, this.config.idPad);
-      try {
-        await fs.access(this.taskDir(norm));
-        throw new ValidationError(`Task ${norm} already exists`);
-      } catch (err) {
-        if (err instanceof ValidationError) throw err;
-        return norm; // access failed => does not exist
-      }
+      if (await this.store.exists(norm)) throw new ValidationError(`Task ${norm} already exists`);
+      return norm;
     }
     const ids = await this.listIds();
     let next = ids.reduce((max, id) => Math.max(max, idNum(id) || 0), 0) + 1;
@@ -310,41 +403,51 @@ export class FsTaskRepository {
     // eslint-disable-next-line no-constant-condition
     while (true) {
       const candidate = padId(next, this.config.idPrefix, this.config.idPad);
-      try {
-        await fs.access(this.taskDir(candidate));
-        next += 1;
-      } catch {
-        return candidate;
-      }
+      if (!(await this.store.exists(candidate))) return candidate;
+      next += 1;
     }
   }
 
   // ── Patch ───────────────────────────────────────────────────────────────────
   async patch(id: string, req: PatchRequest): Promise<MutationResult> {
     return this.lockFor(id).runExclusive(async () => {
-      const file = this.taskFile(id);
-      let st: Stats;
-      try {
-        st = await fs.stat(file);
-      } catch {
-        throw new NotFoundError(`Task ${normalizeId(id)} not found`);
-      }
-      if (st.mtimeMs !== req.baseRev) {
+      // One load answers both questions: the revision to compare and the
+      // document to mutate. Checking the revision first preserves the existing
+      // contract that a stale write conflicts rather than reporting a parse error.
+      const doc = await this.loadDocument(id);
+      if (doc.rev !== req.baseRev) {
         return { conflict: true, current: await this.read(id) };
       }
-      const raw = await fs.readFile(file, "utf8");
-      const parsed = parseTaskFile(raw);
-      if (!parsed.ok) {
-        throw new ValidationError(`Cannot patch invalid task ${normalizeId(id)}: ${parsed.error}`);
+      if ("valid" in doc) {
+        throw new ValidationError(`Cannot patch invalid task ${normalizeId(id)}: ${doc.parseError}`);
       }
 
-      const fm: Frontmatter = { ...parsed.frontmatter, id: normalizeId(id) };
-      let body = parsed.parsed;
+      const fm: Frontmatter = { ...doc.frontmatter };
+      let body = doc.body;
+      const appendObservations: Observation[] = [];
 
       if (req.fields) {
         const before: Frontmatter = { ...fm };
         const prevStatus = fm.status;
         Object.assign(fm, req.fields);
+        fm.status = this.canonicalStatus(fm.status);
+        if (req.fields.priority !== undefined && !this.config.get().priorities?.some(p => p.id === fm.priority)) throw new ValidationError("Unknown priority");
+        if (req.fields.status_detail !== undefined && req.fields.status_detail !== before.status_detail) {
+          fm.status_detail = this.validateStatusText(req.fields.status_detail);
+          if (fm.status_detail !== before.status_detail) {
+            fm.status_detail_updated_at = new Date(Math.max(Date.now(), Date.parse(fm.latest_note_at ?? "") + 1 || 0)).toISOString();
+            fm.status_detail_fingerprint = createHash("sha256").update(fm.status_detail).digest("hex");
+          }
+        }
+        if (req.fields.blocker !== undefined && fm.blocker !== before.blocker) {
+          const at = new Date().toISOString();
+          fm.blocked_since = fm.blocker ? (before.blocked_since ?? at) : null;
+          const action = fm.blocker ? (before.blocker ? "updated" : "started") : "resolved";
+          appendObservations.push(this.event(
+            `Blocker ${action}.`, {blocker:{before:before.blocker,after:fm.blocker}}, `blocker.${action}`,
+            {started_at:before.blocked_since ?? fm.blocked_since, resolved_at:fm.blocker ? null : at},
+          ));
+        }
         fm.id = normalizeId(id); // id is not editable
         if (req.fields.status !== undefined) {
           if (req.fields.status === "Completed") {
@@ -353,26 +456,33 @@ export class FsTaskRepository {
             fm.completed = undefined;
           }
         }
-        // An API patch comes from the web UI (= the user editing manually), so record what
-        // changed under Observations. Claude edits task.md directly (via the watcher path),
-        // which does NOT go through here — so this only logs human/UI edits, by design.
-        const changes = describeFieldChanges(before, fm);
-        if (changes.length > 0) {
-          const at = new Date().toISOString();
-          const note = `### ${at} — human\n\nUpdated via web UI — ${changes.join("; ")}.`;
-          const existing = getSection(body, "Observations").trim();
-          body = setSection(body, "Observations", existing ? `${existing}\n\n${note}` : note);
+        const changes: NonNullable<Observation["changes"]> = {};
+        for (const key of Object.keys(req.fields) as (keyof Frontmatter)[]) {
+          if (key !== "blocker" && JSON.stringify(before[key]) !== JSON.stringify(fm[key])) changes[key] = {before:before[key],after:fm[key]};
         }
+        if (Object.keys(changes).length) appendObservations.push(this.event(`Updated ${Object.keys(changes).join(", ")}.`, changes));
       }
       if (req.body) {
         if (req.body.summary !== undefined) body = setSection(body, "Summary", req.body.summary);
         if (req.body.scope !== undefined) body = setSection(body, "Scope", req.body.scope);
         if (req.body.qa !== undefined) body = setSection(body, "QA", req.body.qa);
+        if (req.body.verification !== undefined) body = setSection(body, "Verification evidence", req.body.verification);
+        const changes: NonNullable<Observation["changes"]> = {};
+        for (const [key,heading] of [["summary","Summary"],["scope","Scope"],["qa","QA"],["verification","Verification evidence"]] as const) {
+          const before = getSection(doc.body,heading), after = getSection(body,heading);
+          if (before !== after) changes[key] = {before,after};
+        }
+        if (Object.keys(changes).length) appendObservations.push(this.event(`Updated ${Object.keys(changes).join(", ")}.`,changes));
       }
+      if (!appendObservations.length && JSON.stringify(fm) === JSON.stringify(doc.frontmatter)) return {conflict:false,task:await this.readDetailStrict(id)};
       fm.updated = this.today();
 
-      await this.atomicWrite(file, serializeTaskFile(fm, body));
-      const detail = await this.readDetailStrict(id);
+      const rev = await this.store.save(
+        normalizeId(id),
+        { frontmatter: fm, body, appendObservations, previousObservationCount: doc.observationCount },
+        doc.format,
+      );
+      const detail = await this.detailAfterWrite(id, fm, body, rev, doc.observationCount + appendObservations.length);
       this.bus.publish({
         type: "task.updated",
         id: normalizeId(id),
@@ -386,31 +496,31 @@ export class FsTaskRepository {
   // ── Observations ──────────────────────────────────────────────────────────────
   async appendObservation(id: string, req: ObservationRequest): Promise<MutationResult> {
     return this.lockFor(id).runExclusive(async () => {
-      const file = this.taskFile(id);
-      let st: Stats;
-      try {
-        st = await fs.stat(file);
-      } catch {
-        throw new NotFoundError(`Task ${normalizeId(id)} not found`);
-      }
-      if (st.mtimeMs !== req.baseRev) {
+      const doc = await this.loadDocument(id);
+      if (doc.rev !== req.baseRev) {
         return { conflict: true, current: await this.read(id) };
       }
-      const raw = await fs.readFile(file, "utf8");
-      const parsed = parseTaskFile(raw);
-      if (!parsed.ok) {
-        throw new ValidationError(`Cannot annotate invalid task ${normalizeId(id)}: ${parsed.error}`);
+      if ("valid" in doc) {
+        throw new ValidationError(`Cannot annotate invalid task ${normalizeId(id)}: ${doc.parseError}`);
       }
-      const fm: Frontmatter = { ...parsed.frontmatter, id: normalizeId(id) };
-      const at = req.at && req.at.trim() ? req.at.trim() : new Date().toISOString();
-      const entry = `### ${at} — ${req.author}\n\n${req.text.trim()}`;
-      const existing = getSection(parsed.parsed, "Observations").trim();
-      const merged = existing ? `${existing}\n\n${entry}` : entry;
-      const body = setSection(parsed.parsed, "Observations", merged);
+      const fm: Frontmatter = { ...doc.frontmatter };
       fm.updated = this.today();
+      if (req.verification === "verified" && !req.verification_evidence?.trim()) throw new ValidationError("Verified notes require evidence describing the check and result.");
+      const recordedAt = new Date(Math.max(Date.now(), Date.parse(fm.latest_note_at ?? "") + 1 || 0, Date.parse(fm.status_detail_updated_at ?? "") + 1 || 0)).toISOString();
+      fm.latest_note_at = recordedAt;
+      const appendObservations: Observation[] = [{
+        id: newObservationId(), at: req.at?.trim() || recordedAt, recorded_at:recordedAt,
+        author:req.author, kind:"note", markdown:req.text.trim(), verification:req.verification ?? "unverified",
+        verification_evidence:req.verification_evidence?.trim(),
+      }];
 
-      await this.atomicWrite(file, serializeTaskFile(fm, body));
-      const detail = await this.readDetailStrict(id);
+      // In the structured format this appends one line; the history is never rewritten.
+      const rev = await this.store.save(
+        normalizeId(id),
+        { frontmatter: fm, body: doc.body, appendObservations, previousObservationCount: doc.observationCount },
+        doc.format,
+      );
+      const detail = await this.detailAfterWrite(id, fm, doc.body, rev, doc.observationCount + appendObservations.length);
       this.bus.publish({
         type: "task.updated",
         id: normalizeId(id),
@@ -418,6 +528,36 @@ export class FsTaskRepository {
         rev: detail.rev,
       });
       return { conflict: false, task: detail };
+    });
+  }
+
+  async mutateCommunication(id: string, req: CommunicationMutation, create: boolean): Promise<MutationResult> {
+    return this.lockFor(id).runExclusive(async () => {
+      const doc = await this.document(id);
+      const fm = { ...doc.frontmatter, communications: [...doc.frontmatter.communications] };
+      const previous = fm.communications.find(c => c.id === req.item_id);
+      const fields = create ? CommunicationFieldsSchema.parse(req.fields) : {...req.fields};
+      if (["replied","cancelled"].includes(fields.state ?? "") && req.fields.awaiting_reply === undefined) fields.awaiting_reply=false;
+      const fingerprint = createHash("sha256").update(JSON.stringify(fields)).digest("hex");
+      if (create && previous) {
+        if (previous.creation_fingerprint === fingerprint) return {conflict:false,task:await this.readDetailStrict(id)};
+        throw new ValidationError("Communication ID already exists with different content");
+      }
+      if (doc.rev !== req.baseRev) return {conflict:true,current:await this.read(id,20)};
+      if (!create && !previous) throw new NotFoundError("Communication not found");
+      const at = new Date().toISOString();
+      const item = CommunicationSchema.parse({...previous,...fields,id:previous?.id ?? req.item_id ?? newObservationId().replace("obs_","msg_"),created_at:previous?.created_at ?? at,updated_at:at,creation_fingerprint:previous?.creation_fingerprint ?? fingerprint});
+      if (create && item.state === "replied") throw new ValidationError("Record a sent item before recording its reply");
+      if (previous?.sent_at && (!item.sent_at || item.state === "draft")) throw new ValidationError("Sent history cannot be removed; create another item for a new send");
+      if (item.state === "replied" && !previous?.sent_at) throw new ValidationError("Only an existing sent item can receive a reply");
+      if (previous) fm.communications[fm.communications.indexOf(previous)] = item;
+      else fm.communications.push(item);
+      fm.updated = this.today();
+      const observation = this.event(`Communication ${create ? "recorded" : "updated"}: ${item.subject}.`,{[`communication:${item.id}`]:{before:previous ?? null,after:item}},"communication.updated");
+      const rev = await this.store.save(normalizeId(id),{frontmatter:fm,body:doc.body,appendObservations:[observation],previousObservationCount:doc.observationCount},doc.format);
+      const task = await this.detailAfterWrite(id,fm,doc.body,rev,doc.observationCount+1);
+      this.bus.publish({type:"task.updated",id:normalizeId(id),task:this.summaryFromDetail(task),rev});
+      return {conflict:false,task};
     });
   }
 
@@ -429,22 +569,14 @@ export class FsTaskRepository {
    */
   async setArchived(id: string, archived: boolean, baseRev?: number): Promise<MutationResult> {
     return this.lockFor(id).runExclusive(async () => {
-      const file = this.taskFile(id);
-      let st: Stats;
-      try {
-        st = await fs.stat(file);
-      } catch {
-        throw new NotFoundError(`Task ${normalizeId(id)} not found`);
-      }
-      if (baseRev !== undefined && st.mtimeMs !== baseRev) {
+      const doc = await this.loadDocument(id);
+      if (baseRev !== undefined && doc.rev !== baseRev) {
         return { conflict: true, current: await this.read(id) };
       }
-      const raw = await fs.readFile(file, "utf8");
-      const parsed = parseTaskFile(raw);
-      if (!parsed.ok) {
-        throw new ValidationError(`Cannot archive invalid task ${normalizeId(id)}: ${parsed.error}`);
+      if ("valid" in doc) {
+        throw new ValidationError(`Cannot archive invalid task ${normalizeId(id)}: ${doc.parseError}`);
       }
-      const fm: Frontmatter = { ...parsed.frontmatter, id: normalizeId(id) };
+      const fm: Frontmatter = { ...doc.frontmatter };
       if (fm.archived === archived) {
         // Already in the desired state — don't rewrite the file.
         const task = await this.readDetailStrict(id);
@@ -454,8 +586,12 @@ export class FsTaskRepository {
       fm.archived = archived;
       fm.archived_at = archived ? this.today() : undefined;
 
-      await this.atomicWrite(file, serializeTaskFile(fm, parsed.parsed));
-      const detail = await this.readDetailStrict(id);
+      const rev = await this.store.save(
+        normalizeId(id),
+        { frontmatter: fm, body: doc.body, previousObservationCount: doc.observationCount },
+        doc.format,
+      );
+      const detail = await this.detailAfterWrite(id, fm, doc.body, rev, doc.observationCount);
       this.bus.publish({
         type: "task.updated",
         id: normalizeId(id),
@@ -474,12 +610,11 @@ export class FsTaskRepository {
     for (const candidateId of await this.listIds()) {
       if (candidateId === sourceId) continue;
       try {
-        const raw = await fs.readFile(this.taskFile(candidateId), "utf8");
-        const parsed = parseTaskFile(raw);
+        const candidate = await this.store.loadDocument(candidateId);
         if (
-          parsed.ok &&
-          parsed.frontmatter.recurrence_of &&
-          normalizeId(parsed.frontmatter.recurrence_of) === sourceId
+          candidate.ok &&
+          candidate.frontmatter.recurrence_of &&
+          normalizeId(candidate.frontmatter.recurrence_of) === sourceId
         ) {
           return this.readDetailStrict(candidateId);
         }
@@ -488,7 +623,7 @@ export class FsTaskRepository {
       }
     }
 
-    return this.createWithLineage(
+    const successor = await this.createWithLineage(
       {
         title: source.title,
         project: source.project,
@@ -497,6 +632,8 @@ export class FsTaskRepository {
         risk: source.risk,
         status: "Backlog",
         status_detail: "",
+        priority: source.priority,
+        next_action: null,
         tags: [...source.tags],
         skills: [...source.skills],
         recurring: true,
@@ -504,30 +641,38 @@ export class FsTaskRepository {
         blocks: [],
         relates_to: [],
         parent: null,
+        resources: source.resources.map((resource) => ({ ...resource })),
         summary: source.summaryMarkdown,
         scope: source.scopeMarkdown,
         // How-to-test steps are content, not lifecycle state: the next occurrence is
         // tested the same way, so they carry forward with summary/scope.
         qa: source.qaMarkdown,
+        verification: "",
       },
       sourceId,
     );
+    const sourceResources = path.join(this.taskDir(sourceId), "resources");
+    const successorResources = path.join(this.taskDir(successor.id), "resources");
+    try {
+      await fs.cp(sourceResources, successorResources, { recursive: true, force: false });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+    return this.readDetailStrict(successor.id);
   }
 
   /** Permanently remove an archived task directory after an exact revision check. */
   async delete(id: string, baseRev: number): Promise<DeleteResult> {
     return this.lockFor(id).runExclusive(async () => {
       const canonical = normalizeId(id);
-      const file = this.taskFile(canonical);
-      let st: Stats;
-      try { st = await fs.stat(file); }
-      catch { throw new NotFoundError(`Task ${canonical} not found`); }
-      if (st.mtimeMs !== baseRev) return { conflict: true, current: await this.read(canonical) };
+      if ((await this.revOf(canonical)) !== baseRev) {
+        return { conflict: true, current: await this.read(canonical) };
+      }
       const detail = await this.readDetailStrict(canonical);
       if (!detail.archived) {
         throw new ValidationError(`Task ${canonical} must be archived before permanent deletion`);
       }
-      const dir = path.dirname(file);
+      const dir = this.taskDir(canonical);
       const rel = path.relative(this.env.boardDir, dir);
       if (!ID_DIR_RE.test(rel) || path.isAbsolute(rel)) {
         throw new ValidationError(`Refusing to delete unsafe task path for ${canonical}`);
@@ -553,6 +698,14 @@ export class FsTaskRepository {
       risk: detail.risk,
       status: detail.status,
       status_detail: detail.status_detail,
+      status_detail_updated_at: detail.status_detail_updated_at,
+      status_detail_fingerprint: detail.status_detail_fingerprint,
+      latest_note_at: detail.latest_note_at,
+      priority: detail.priority,
+      next_action: detail.next_action,
+      communications: detail.communications,
+      blocker: detail.blocker,
+      blocked_since: detail.blocked_since,
       created: detail.created,
       updated: detail.updated,
       completed: detail.completed,
@@ -568,14 +721,15 @@ export class FsTaskRepository {
       parent: detail.parent,
       children: detail.children,
       sources: detail.sources,
+      resources: detail.resources,
     };
-    return toTaskSummary({
+    return {...toTaskSummary({
       fm,
       rev: detail.rev,
       summaryMarkdown: detail.summaryMarkdown,
       scopeMarkdown: detail.scopeMarkdown,
       attachmentCount: detail.attachments.length,
-      observationCount: detail.observations.length,
-    });
+      observationCount: detail.observationCount,
+    }), communication_counts: detail.communication_counts};
   }
 }

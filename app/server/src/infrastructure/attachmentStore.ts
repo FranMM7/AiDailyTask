@@ -14,10 +14,14 @@ import type { Env } from "../env";
 import { NotFoundError, ValidationError } from "../errors";
 
 export class AttachmentStore {
-  constructor(private readonly env: Env) {}
+  constructor(
+    private readonly env: Env,
+    private readonly folder = "files",
+    private readonly route = "attachments",
+  ) {}
 
   filesDir(id: string): string {
-    return path.join(this.env.boardDir, normalizeId(id), "files");
+    return path.join(this.env.boardDir, normalizeId(id), this.folder);
   }
 
   private mimeOf(name: string): string {
@@ -25,7 +29,7 @@ export class AttachmentStore {
   }
 
   private urlFor(id: string, name: string): string {
-    return `/api/tasks/${normalizeId(id)}/attachments/${encodeURIComponent(name)}`;
+    return `/api/tasks/${normalizeId(id)}/${this.route}/${encodeURIComponent(name)}`;
   }
 
   /** Sanitize to a bare filename; throws if nothing usable remains. */

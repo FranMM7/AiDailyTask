@@ -141,6 +141,47 @@ database.
   author, newest last, so a task carries its own history.
 - **Attach files:** drag files onto the drawer's upload area, or **paste a screenshot directly into an
   observation** — it's saved under `board/<ID>/files/` and embedded inline in the note.
+
+### Storage format and the structured migration
+
+A task is stored in one of two formats and the app reads both:
+
+```
+board/<ID>/task.json           frontmatter + body sections            (structured)
+board/<ID>/observations.jsonl  one observation per line, appended     (structured)
+board/<ID>/task.md             frontmatter + body + ## Observations   (legacy)
+```
+
+Set `AIDAILYTASKS_TASK_STORE` to choose:
+
+| Value | Meaning |
+| --- | --- |
+| `auto` (default) | Read each task in whichever format it is stored in, preferring `task.json`. New tasks are created as JSON once any task has been migrated. |
+| `json` | Structured only. |
+| `markdown` | Legacy only — the rollback switch. |
+
+Migrating is two separate runs, so nothing is deleted until you ask for it:
+
+```bash
+npm run migrate:structured -- status                     # what format is each task in?
+npm run migrate:structured -- convert --dry-run          # verify every task converts
+npm run migrate:structured -- convert                    # write the structured files
+npm run migrate:structured -- remove-markdown --dry-run  # what would be deleted, and why not
+npm run migrate:structured -- remove-markdown --yes      # delete the legacy task.md files
+```
+
+`convert` leaves `task.md` in place, so the board stays readable both ways and the migration can
+be abandoned by deleting the JSON. **Once a task has a `task.json` it is the source of truth and
+the leftover `task.md` is ignored** — do not keep editing it. `remove-markdown` re-checks every
+task and refuses to delete a `task.md` that holds an observation missing from
+`observations.jsonl`, reporting each one it kept and why.
+
+To convert into a separate directory for review instead of in place, pass
+`--output <dir>`; that never modifies `board/`.
+
+`npm run bench:store -- --board board --store json` times the board list, a task read, and an
+observation page against a real board, for comparing the formats on your own hardware.
+
 - **Archive / restore:** finished tasks auto-archive after a while (configurable in
   `board.config.json`), or archive one by hand from the drawer. The **Archive** view lists them and
   restores with one click.
@@ -403,9 +444,11 @@ too: `graphify_query` (natural-language question over the knowledge graph), `gra
 
 On the first eligible `get_task` read in each MCP session, a task whose project has a **ready,
 currently configured Graphify index** includes a `project_study_hint`. It recommends
-`graphify_query` for a quick architecture study, but it never starts indexing, refreshes the graph,
-or runs a query automatically. Later task reads for that project stay compact; a new MCP session can
-surface the advisory again.
+`query_code_graph` for a precise file or symbol question; use Graphify's `explain`, `path`, or
+`affected` commands only once you have an exact node label. Broad `graphify_query` architecture
+questions can produce noisy, truncated traversals. The hint never starts indexing, refreshes the
+graph, or runs a query automatically. Later task reads for that project stay compact; a new MCP
+session can surface the advisory again.
 
 Because it's built on the open [Model Context Protocol](https://modelcontextprotocol.io) **and** on
 plain files, it isn't tied to any one assistant: MCP-capable agents (Claude, and other MCP clients)
@@ -484,6 +527,18 @@ tool, and you watch the board update live in the browser.
 
 ## Share the board over the web (temporarily)
 
+Click **Share** in the local toolbar, choose a lifetime (1–1440 minutes), optionally require a
+username/password, then **Start sharing**. The dialog shows the public URL, **Copy link**, its closing
+time and **Stop sharing**. It uses the same ngrok runner as `npm run share`; no terminal is needed
+after ngrok is installed and configured. Build the UI first with `npm run build`.
+Closing the dialog keeps the link alive until its timer expires. Stopping/restarting the server
+closes a UI-started tunnel. Sharing controls are available only from localhost, not through the
+public link. They manage server runtime, not task data, and are deliberately not exposed through MCP.
+
+The toolbar's **Filters** button opens task filters, next-action presets, **Changes since** and
+**Waiting on** in a dialog. Its badge counts active filter fields; **Clear filters** resets them.
+Selections still live in the URL, so closing the dialog preserves the filtered view.
+
 The board is localhost-only by design, but sometimes you want to show it to someone else for a
 little while. `npm run share` opens an [ngrok](https://ngrok.com/download) tunnel to the running
 server and prints a public `https://…` link that **closes itself after a time limit**:
@@ -519,3 +574,182 @@ in an npm-workspaces monorepo. No database; the filesystem is the store.
 ## License
 
 This project is open source under the [MIT License](LICENSE).
+
+
+### Current task blockers
+
+`create_task` accepts an initial `blocker` and records its start automatically.
+Open the **Blocker** tab to write or preview detailed Markdown and save, or call `update_task` with
+`blocker: "Waiting for approval of the migration plan"`. `blocker` is empty when
+unblocked; `blocked_since` is maintained by the server. `get_task` returns the full Markdown (up to 100,000 characters); `list_tasks`
+returns a short excerpt with `blocker_truncated` and the start timestamp. A blocker is independent of status and dependency links.
+Setting, editing, or clearing it automatically appends an observation; resolution
+retains the previous reason and start/end timestamps in history. Use **Resolve blocker** in the tab, or clear it through MCP with
+`blocker: ""`. Identical writes do not create duplicate blocker events.
+Recurring successors start unblocked. Use the API/MCP or UI for these transitions;
+direct file edits bypass automatic lifecycle observations.
+
+#### MCP: write a message in the Blocker tab
+
+When progress requires missing information, approval, access, or an external dependency,
+read `get_task` and use its `rev` as `baseRev`. Call `update_task` with a **top-level**
+`blocker` string, not `body.blocker` or `add_observation`:
+
+```json
+{
+  "id": "C123",
+  "baseRev": 1789660000000,
+  "blocker": "Waiting for migration approval.\n\n## Context and evidence\nThe migration is prepared; validation passed in staging.\n\n## Attempts\nReviewed the rollback procedure. Production execution has not started.\n\n## Needed to unblock\nThe project owner must approve the migration plan and execution window."
+}
+```
+
+Replace the example ID and revision with the real task values. Include concrete evidence,
+attempted actions, and the exact decision or information required; name the responsible
+person only when known. The Markdown is displayed in the **Blocker** tab, up to 100,000
+characters. `create_task` also accepts `blocker` alongside its required title/category.
+
+Updating `blocker` replaces the entire message, so preserve relevant existing context.
+Omit it to leave the current blocker unchanged. On conflict, re-read the task and review
+the latest details before retrying. `list_tasks` contains an excerpt; use `get_task` for
+the full text, especially when `blocker_truncated` is true.
+
+Once the issue is resolved, re-read the task and call `update_task` with:
+
+```json
+{ "id": "C123", "baseRev": 1789660000001, "blocker": "" }
+```
+
+The server clears the active blocker and `blocked_since` and automatically adds a dated
+observation retaining the full previous message. Start and edit events are automatic too.
+Do not set `blocked_since` or add duplicate lifecycle observations. Recording a pending
+approval does not grant that approval or change task status.
+
+### Store board data on another drive
+
+Agents can call `get_storage_info` for active storage paths and relocation instructions.
+It is read-only and does not move files or change the running location.
+
+1. Stop the HTTP server and all stdio agent connections before copying data.
+2. Copy `board/`, `exports/`, `graphs/`, `project-docs/`, `board.config.json`, and
+   `projects.json` (whichever exist) to a folder such as `D:/AiDailyTasksData`.
+   Preserve attachments, observation logs, and the directory layout.
+3. Create `storage.local.json` in the application repository:
+
+   ```json
+   { "dataRoot": "D:/AiDailyTasksData" }
+   ```
+
+4. Restart the server and reconnect agents. Verify tasks, observations, attachments,
+   project documentation, and vocabulary before removing any original copy.
+   Refresh saved stdio configurations from **Connect**; generated configurations
+   explicitly carry the active data location.
+
+The pointer file is git-ignored. Relative paths resolve against the application
+repository. `AIDAILYTASKS_DATA_ROOT` overrides the file; all processes must use the
+same override. With neither setting, existing paths are unchanged. Web assets,
+templates, and executables stay in the application repository. Import, structured
+migration, and benchmark defaults follow the data location; explicit `--board`
+arguments take precedence. This setting selects storage at startup: it does not
+copy files or switch a running process. Keep external data out of any published
+repository and include it in your normal backups.
+
+
+### Daily workflow fields and evidence
+
+Current status (`status_detail`) is a replacement paragraph, trimmed to 600 characters. Unchanged
+legacy long text can still be saved with unrelated edits. Replacing it stores its complete previous
+value once in system history. **Notes newer than status** requests a review; **Status freshness
+unknown** means there is no trustworthy baseline. New notes use server recording time, even when
+`at` is backdated; generated system history does not make status stale.
+
+Observation labels are `verified`, `unverified` (the default for new old-client notes), or
+`assumption`. Verified notes require `verification_evidence` describing what was checked, how, the
+result and limits. Existing unlabelled notes stay **Not classified**. A label records the author's
+claim, not an automated guarantee. Correct a finding with another observation referencing its ID.
+
+**User test script** is the existing `qa` section, for reproducible steps and expected outcomes.
+**Verification evidence** is the separate `verification` section, for actual dated results. Both
+support Markdown and pasted attachments. Recurring successors copy user steps but clear prior
+verification results, next actions and communications.
+
+Priority orders work independently of severity: Urgent, High, Normal (default), Low. One nullable
+`next_action` holds `{text, owner, due_date}`. Due dates are calendar `YYYY-MM-DD` values. Today,
+Tomorrow, Overdue and Undated presets use the browser's local date and include scheduled Backlog
+work; Completed/Cancelled are excluded unless **Include closed** is selected. Owner/project filters
+remain explicit. `list_tasks` accepts `priority`, `has_next_action`, `next_action_owner`,
+`next_action_date_from/to`, `action_undated`, `include_closed`, and `sort: "priority"`.
+
+Communications are local records, never an external send. Use **Record as sent** or **Record reply**
+to record facts. Drafts cannot await replies. **Waiting on** shows sent records with
+`awaiting_reply=true`, includes archived/closed tasks by default, and filters by exact recipient or
+channel. HTTP `/api/tasks/:id/communications` supports GET/POST/PATCH; `/api/communications` is the
+cross-task query. MCP exposes `add_communication`, `update_communication`, `get_communication`, and
+`list_communications`. Mutation envelopes contain required `baseRev`, `item_id`, and `fields`;
+repeat a creation's item ID and identical fields for a safe retry. Get the full body by item ID.
+
+### Changes since and compatible writes
+
+HTTP `GET /api/changes` and MCP `list_changes` accept required timezone-qualified `since`, optional
+`until`, `project`, `archived` (include by default), `limit` (100 default, 200 maximum), and `cursor`.
+The chronological window is `(since, until]`. Follow every `next_cursor` with the same original
+filters; `until` stays fixed. Snapshots expire after ten minutes or capacity eviction and explicitly
+require a restart. Current status/freshness describe current context. Legacy notes fall back to
+`at`; direct edits/copies/deletions cannot provide a complete historical audit.
+
+Excerpts, evidence and field snapshots can be truncated. Retrieve full observations using
+`GET /api/tasks/:id/observations/:observationId` or
+`list_observations({id, observation_id})`. The **Changes since** panel opens from task views.
+
+Canonical content keys are `summary`, `scope`, `qa`, `verification`. HTTP reads retain
+`summaryMarkdown`, `scopeMarkdown`, `qaMarkdown`, `verificationMarkdown`. HTTP PATCH accepts the
+existing `{baseRev, fields, body}` envelope or flat canonical fields. Body Markdown aliases are
+accepted; identical duplicates normalize once, conflicting aliases and unknown keys are errors.
+Empty strings clear content and omitted fields preserve it. HTTP requires `baseRev`; MCP retains
+optional revision lookup for older clients. Always prefer an explicit revision. A supplied stale
+revision is never retried automatically: HTTP returns 409, MCP returns `conflict`, `current_rev`,
+and a reread instruction.
+
+```javascript
+const {task} = await fetch('/api/tasks/C01').then(r => r.json());
+const response = await fetch('/api/tasks/C01', {
+  method: 'PATCH', headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({baseRev: task.rev, status_detail: 'Ready for review',
+    verification: '2026-09-28: tested locally; result and limitations here.'})
+});
+if (response.status === 409) throw new Error('Re-read and review before retrying');
+if (!response.ok) throw new Error(await response.text());
+```
+
+The MCP equivalent is `get_task({id:'C01'})`, then
+`update_task({id:'C01', baseRev:task.rev, status_detail:'Ready for review'})`.
+Initialize HTTP MCP and send `notifications/initialized` before tools; keep the returned session ID
+on POST/GET/DELETE. Missing sessions return 400; deleted, expired or pre-restart IDs return 404 and
+must be reinitialized. A healthy `/api/mcp-health` plus stale host tools requires host reconnect;
+it does not mean the server repaired the host's cached schemas. Source-watch restarts also replace
+sessions. Connect provides the current inventory and direct-TSX stdio configuration.
+
+### Cancellation migration and direct files
+
+Settings **Cancellation status cleanup** and MCP `migrate_status_alias` expose `preview`, `apply`,
+`resume` and `rollback` for the specific Depricated → Cancelled repair. HTTP uses
+`POST /api/migrations/status-alias`. Review the preview and pass its `preview_hash` on apply. Existing
+canonical settings win collisions. Active/archived JSON and Markdown tasks are included; invalid
+tasks block apply unless explicitly excluded. New writes/filters accept configured aliases and
+persist canonical status. Cancelled does not trigger Completed lifecycle behavior.
+
+Backups and resumable exact-byte journals live under the selected task's
+`files/status-migration/<operation_id>/journal.json` (C278 by default). Keep direct filesystem writers
+stopped during maintenance. App and stdio mutations share an exclusive filesystem gate. Changed
+files or stale previews are rejected; resume/rollback accept only known before/after bytes and
+refuse to overwrite subsequent edits. A leftover `board/_meta/runtime/write.lock` after a killed
+writer requires stopping writers and inspecting its owner before removal.
+
+Direct file edits bypass lifecycle logging. Preserve observation `id`, `recorded_at`, `kind`,
+verification/evidence and typed change data. Legacy Markdown uses an escaped `aidt-observation`
+metadata comment without changing observation headings; JSONL retains those fields directly.
+Do not fabricate status timestamps or fingerprints: use the application to replace status and
+establish a trustworthy baseline. Unknown freshness is preferable to inferring status change time
+from file modification time. Application-written legacy Markdown also carries an internal
+`observation_fingerprint`; changed history or a missing fingerprint makes its status freshness
+unknown until the status is reviewed. Structured history uses its file stamp for the same purpose.
+Exports include evidence and full typed snapshots.

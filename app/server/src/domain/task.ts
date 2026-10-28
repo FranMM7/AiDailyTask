@@ -4,6 +4,8 @@
  * body split into "## Summary", "## Scope", "## Observations" (and any other
  * sections, which are preserved verbatim).
  */
+import { decodeObservationMetadata, legacyObservationId } from "./observation";
+import { statusFreshness } from "@AiDailyTasks/shared";
 import matter from "gray-matter";
 import yaml from "js-yaml";
 import {
@@ -93,11 +95,13 @@ export function parseObservations(sectionContent: string): Observation[] {
     const m = matches[i];
     const start = (m.index ?? 0) + m[0].length;
     const end = i + 1 < matches.length ? (matches[i + 1].index ?? sectionContent.length) : sectionContent.length;
-    out.push({
+    const observation: Observation = {
       at: m[1],
       author: m[2].trim(),
-      markdown: sectionContent.slice(start, end).replace(/^\n+|\n+$/g, ""),
-    });
+      ...decodeObservationMetadata(sectionContent.slice(start, end).replace(/^\n+|\n+$/g, "")),
+    };
+    observation.id ??= legacyObservationId(observation, i);
+    out.push(observation);
   }
   return out;
 }
@@ -141,6 +145,15 @@ const KEY_ORDER: readonly (keyof Frontmatter)[] = [
   "risk",
   "status",
   "status_detail",
+  "status_detail_updated_at",
+  "status_detail_fingerprint",
+  "observation_fingerprint",
+  "latest_note_at",
+  "priority",
+  "next_action",
+  "communications",
+  "blocker",
+  "blocked_since",
   "created",
   "updated",
   "completed",
@@ -156,6 +169,7 @@ const KEY_ORDER: readonly (keyof Frontmatter)[] = [
   "parent",
   "children",
   "sources",
+  "resources",
 ];
 
 const OPTIONAL_DATE_KEYS = new Set<keyof Frontmatter>(["created", "updated", "completed", "archived_at"]);
@@ -164,6 +178,7 @@ function orderedFrontmatter(fm: Frontmatter): Record<string, unknown> {
   const o: Record<string, unknown> = {};
   for (const key of KEY_ORDER) {
     const value = fm[key];
+    if (value === undefined) continue;
     if (key === "archived") {
       // Boolean flag; only persisted when true so active tasks stay unchanged.
       if (value === true) o[key] = true;
@@ -231,6 +246,9 @@ export function toTaskSummary(args: {
     ...args.fm,
     rev: args.rev,
     valid: true,
+    communications: [],
+    status_freshness: statusFreshness(args.fm),
+    communication_counts: { draft: args.fm.communications.filter(c => c.state === "draft").length, awaiting_reply: args.fm.communications.filter(c => c.state === "sent" && c.awaiting_reply).length },
     excerpt: excerpt(excerptSource),
     attachmentCount: args.attachmentCount,
     observationCount: args.observationCount,
@@ -238,23 +256,83 @@ export function toTaskSummary(args: {
   };
 }
 
+/**
+ * Build the detail DTO from an already-resolved observation page.
+ *
+ * Observations are passed in rather than parsed out of the body so a structured
+ * task never has to materialize its history to answer a detail request; the
+ * Markdown path resolves its page first and calls the same builder.
+ */
+export function buildTaskDetail(args: {
+  fm: Frontmatter;
+  rev: number;
+  summaryMarkdown: string;
+  scopeMarkdown: string;
+  qaMarkdown: string;
+  verificationMarkdown?: string;
+  /** The newest page (oldest-to-newest within the page), or the whole history. */
+  observations: Observation[];
+  /** Length of the complete history, not of the page above. */
+  observationCount: number;
+  attachments: Attachment[];
+  resourceFiles?: Attachment[];
+  rawBody: string;
+  paged: boolean;
+}): TaskDetail {
+  return {
+    ...args.fm,
+    rev: args.rev,
+    valid: true,
+    status_freshness: statusFreshness(args.fm),
+    communications: [],
+    communication_count: args.fm.communications.length,
+    communication_counts: {draft:args.fm.communications.filter(c=>c.state === "draft").length,awaiting_reply:args.fm.communications.filter(c=>c.state === "sent" && c.awaiting_reply).length},
+    summary: args.summaryMarkdown, scope: args.scopeMarkdown, qa: args.qaMarkdown, verification: args.verificationMarkdown ?? "",
+    verificationMarkdown: args.verificationMarkdown ?? "",
+    summaryMarkdown: args.summaryMarkdown,
+    scopeMarkdown: args.scopeMarkdown,
+    qaMarkdown: args.qaMarkdown,
+    observations: args.observations,
+    observationCount: args.observationCount,
+    nextObservationCursor:
+      args.paged && args.observationCount > args.observations.length
+        ? String(args.observationCount - args.observations.length)
+        : null,
+    attachments: args.attachments,
+    resourceFiles: args.resourceFiles ?? [],
+    // Valid task views consume the structured section fields above. Do not duplicate
+    // the complete Markdown body (and its full observation history) in paged API
+    // responses; rawBody is only needed for internal full reads / invalid diagnostics.
+    rawBody: args.paged ? "" : args.rawBody,
+    updatedEffective: updatedEffective(args.fm.updated, args.rev),
+  };
+}
+
+/** Markdown-shaped convenience wrapper: split the history out of the body first. */
 export function toTaskDetail(args: {
   fm: Frontmatter;
   rev: number;
   parsed: ParsedBody;
   rawBody: string;
   attachments: Attachment[];
+  resourceFiles?: Attachment[];
+  /** Omit to include the complete history (exports and internal callers). */
+  observationLimit?: number;
 }): TaskDetail {
-  return {
-    ...args.fm,
+  const all = parseObservations(getSection(args.parsed, "Observations"));
+  const limit = args.observationLimit;
+  return buildTaskDetail({
+    fm: args.fm,
     rev: args.rev,
-    valid: true,
     summaryMarkdown: getSection(args.parsed, "Summary"),
     scopeMarkdown: getSection(args.parsed, "Scope"),
     qaMarkdown: getSection(args.parsed, "QA"),
-    observations: parseObservations(getSection(args.parsed, "Observations")),
+    verificationMarkdown: getSection(args.parsed, "Verification evidence"),
+    observations: limit === undefined ? all : all.slice(-Math.max(1, limit)),
+    observationCount: all.length,
     attachments: args.attachments,
+    resourceFiles: args.resourceFiles,
     rawBody: args.rawBody,
-    updatedEffective: updatedEffective(args.fm.updated, args.rev),
-  };
+    paged: limit !== undefined,
+  });
 }

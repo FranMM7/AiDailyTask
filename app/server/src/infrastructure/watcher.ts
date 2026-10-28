@@ -1,18 +1,23 @@
 /**
- * Watches board/ for direct file edits (Claude editing task.md, or files/ changes)
- * and broadcasts SSE events. Self-writes are suppressed via RecentWrites so the
- * server never reacts to its own writes (no loops). The watcher NEVER writes.
+ * Watches board/ for direct file edits (an agent editing a task file, or files/
+ * changes) and broadcasts SSE events. Both storage formats are watched: task.md
+ * for legacy tasks, task.json + observations.jsonl for structured ones.
+ * Self-writes are suppressed via RecentWrites so the server never reacts to its
+ * own writes (no loops). The watcher NEVER writes.
  */
 import fs from "node:fs/promises";
 import path from "node:path";
 import { watch, type FSWatcher } from "chokidar";
 import { normalizeId } from "@AiDailyTasks/shared";
+import { OBSERVATIONS_FILE, TASK_JSON_FILE, TASK_MARKDOWN_FILE } from "../domain/structuredTask";
 import type { Env } from "../env";
 import type { FsTaskRepository } from "./taskRepository";
 import type { EventBus } from "./eventBus";
 import type { RecentWrites } from "./recentWrites";
 
 const ID_DIR_RE = /^C\d+$/;
+/** Any of these changing means the task changed, whichever format backs it. */
+const TASK_FILES: readonly string[] = [TASK_MARKDOWN_FILE, TASK_JSON_FILE, OBSERVATIONS_FILE];
 
 /** Given an absolute path under board/, classify it. */
 function classify(env: Env, filePath: string): { id: string; kind: "task" | "attachment" } | null {
@@ -22,7 +27,7 @@ function classify(env: Env, filePath: string): { id: string; kind: "task" | "att
   const dir = parts[0];
   if (!dir || !ID_DIR_RE.test(dir)) return null;
   const id = normalizeId(dir);
-  if (parts.length === 2 && parts[1] === "task.md") return { id, kind: "task" };
+  if (parts.length === 2 && TASK_FILES.includes(parts[1])) return { id, kind: "task" };
   if (parts.length >= 3 && parts[1] === "files") return { id, kind: "attachment" };
   return null;
 }
@@ -43,7 +48,14 @@ export class BoardWatcher {
     this.watcher = watch(this.env.boardDir, {
       ignoreInitial: true,
       awaitWriteFinish: { stabilityThreshold: 250, pollInterval: 100 },
-      ignored: (p: string) => /task\.md\.tmp-/.test(p),
+      // Atomic writes land as `<name>.tmp-<nanoid>` siblings before the rename.
+      ignored: (p: string) => {
+        const relative = path.relative(this.env.boardDir, p).split(path.sep).join("/");
+        // Write locks are rapidly created/removed by HTTP and stdio. Watching them
+        // can race Windows realpath and crash chokidar; they carry no board content.
+        return relative === "_meta/runtime" || relative.startsWith("_meta/runtime/")
+          || /\.(?:tmp|migration)-[A-Za-z0-9_-]+$/.test(p);
+      },
     });
     this.watcher
       .on("add", (p) => this.onTaskChange(p))
@@ -109,11 +121,26 @@ export class BoardWatcher {
   private onUnlink(p: string): void {
     const info = classify(this.env, p);
     if (!info) return;
-    if (info.kind === "task") {
-      this.schedule(`task:${info.id}`, () => this.bus.publish({ type: "task.deleted", id: info.id }));
-    } else {
+    if (info.kind !== "task") {
       this.maybeAttachment(p);
+      return;
     }
+    // Removing one representation does not delete the task — dropping legacy
+    // task.md after a migration leaves task.json in charge. Only report a
+    // deletion once no format remains readable.
+    this.schedule(`task:${info.id}`, async () => {
+      try {
+        const detail = await this.repo.read(info.id);
+        if (detail.valid) {
+          const summary = await this.summaryFor(info.id);
+          if (summary) this.bus.publish({ type: "task.updated", id: info.id, task: summary, rev: detail.rev });
+        } else {
+          this.bus.publish({ type: "task.invalid", id: info.id, parseError: detail.parseError });
+        }
+      } catch {
+        this.bus.publish({ type: "task.deleted", id: info.id });
+      }
+    });
   }
 
   async stop(): Promise<void> {

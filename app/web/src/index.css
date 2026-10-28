@@ -28,6 +28,14 @@ body {
   @apply bg-slate-950 text-slate-100;
 }
 
+@keyframes resource-enter {
+  from { opacity: 0; transform: translateY(-8px) scale(0.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-\[resource-enter_\.18s_ease-out\] { animation: none; }
+}
+
 /* Native <select> option popups: explicit colors as a fallback for browsers
    that don't fully honor color-scheme on the option list. */
 select option {

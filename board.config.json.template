@@ -188,5 +188,28 @@
   },
   "archive": {
     "autoArchiveDays": 14
-  }
+  },
+  "priorities": [
+    {
+      "id": "Urgent",
+      "color": "#ef4444",
+      "rank": 0
+    },
+    {
+      "id": "High",
+      "color": "#f97316",
+      "rank": 1
+    },
+    {
+      "id": "Normal",
+      "color": "#3b82f6",
+      "rank": 2
+    },
+    {
+      "id": "Low",
+      "color": "#64748b",
+      "rank": 3
+    }
+  ],
+  "statusAliases": {}
 }

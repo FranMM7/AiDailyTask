@@ -3,7 +3,6 @@ import { Link, Route, Routes } from "react-router-dom";
 import { useConfig } from "@/api/hooks";
 import { useUiStore } from "@/store/ui";
 import { TopBar } from "@/components/TopBar";
-import { FilterBar } from "@/components/FilterBar";
 import { TaskDrawer } from "@/components/TaskDrawer";
 import { Toaster } from "@/components/Toaster";
 import { BoardView } from "@/views/BoardView";
@@ -16,6 +15,7 @@ import { StatsView } from "@/views/StatsView";
 import { McpConfigView } from "@/views/McpConfigView";
 import { ProjectsView } from "@/views/ProjectsView";
 import { SettingsView } from "@/views/SettingsView";
+import { ResourcesView } from "@/views/ResourcesView";
 
 function NotFound() {
   return (
@@ -48,12 +48,12 @@ export default function App() {
   return (
     <div className="flex h-full flex-col">
       <TopBar />
-      <FilterBar />
       <main className="min-h-0 flex-1">
         <Routes>
           <Route path="/" element={<BoardView />} />
           <Route path="/backlog" element={<BacklogView />} />
           <Route path="/table" element={<TableView />} />
+          <Route path="/resources" element={<ResourcesView />} />
           <Route path="/graph" element={<GraphView />} />
           <Route path="/code-graph" element={<CodeGraphView />} />
           <Route path="/archive" element={<ArchiveView />} />

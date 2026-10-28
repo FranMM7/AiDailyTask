@@ -159,6 +159,11 @@ export class CodeGraphService {
    * generated with the graphify indexer. Exported to the MCP layer.
    */
   async runGraphifyText(projectId: string, args: string[]): Promise<string> {
+    if (this.indexerFor(projectId) !== "graphify") {
+      throw new ValidationError(
+        `Graphify is not enabled for "${projectId}". Configure its code-graph engine as Graphify and regenerate first.`,
+      );
+    }
     const dir = this.projectDir(projectId);
     const graphPath = path.join(dir, "graphify-out", "graph.json");
     try {

@@ -20,7 +20,7 @@ function isValid(t: TaskSummaryOrInvalid): t is TaskSummary {
 
 function hasNarrowingFilter(f: TaskFilter): boolean {
   return Boolean(
-    f.project ||
+    f.priority?.length || f.has_next_action !== undefined || f.action_undated !== undefined || f.next_action_owner !== undefined || f.next_action_date_from || f.next_action_date_to || f.project ||
       (f.status && f.status.length) ||
       (f.category && f.category.length) ||
       (f.severity && f.severity.length) ||
@@ -44,6 +44,12 @@ function matches(t: TaskSummary, f: TaskFilter): boolean {
   if (archived === "exclude" && t.archived) return false;
   if (archived === "only" && !t.archived) return false;
 
+  if (f.priority?.length && !f.priority.includes(t.priority)) return false;
+  if (f.has_next_action !== undefined && f.has_next_action !== !!t.next_action) return false;
+  if (f.next_action_owner !== undefined && (t.next_action?.owner ?? "").toLowerCase() !== f.next_action_owner.toLowerCase()) return false;
+  if (f.action_undated && (!t.next_action || t.next_action.due_date)) return false;
+  if ((f.next_action_date_from || f.next_action_date_to) && (!t.next_action?.due_date || f.next_action_date_from && t.next_action.due_date < f.next_action_date_from || f.next_action_date_to && t.next_action.due_date > f.next_action_date_to)) return false;
+  if ((f.has_next_action || f.action_undated || f.next_action_owner !== undefined || f.next_action_date_from || f.next_action_date_to) && !f.include_closed && ["Completed","Cancelled"].includes(t.status)) return false;
   if (f.project && t.project !== f.project) return false;
   if (f.status && f.status.length && !f.status.includes(t.status)) return false;
   if (f.category && f.category.length && !f.category.includes(t.category)) return false;
@@ -89,13 +95,14 @@ function compare(a: TaskSummary, b: TaskSummary, sort: TaskFilter["sort"]): numb
   }
 }
 
-export function applyFilter(items: TaskSummaryOrInvalid[], f: TaskFilter): TaskSummaryOrInvalid[] {
+export function applyFilter(items: TaskSummaryOrInvalid[], f: TaskFilter, priorityRank: (value:string)=>number = () => 2): TaskSummaryOrInvalid[] {
   const valids = items.filter(isValid);
   const invalids = items.filter((t): t is Exclude<TaskSummaryOrInvalid, TaskSummary> => !t.valid);
 
   const filtered = valids.filter((t) => matches(t, f));
   filtered.sort((a, b) => {
-    const c = compare(a, b, f.sort);
+    if(f.sort === "priority") return (priorityRank(a.priority)-priorityRank(b.priority))*(f.order === "desc" ? -1 : 1) || (a.next_action?.due_date ?? "9999").localeCompare(b.next_action?.due_date ?? "9999") || idNum(a.id)-idNum(b.id);
+    const c=compare(a,b,f.sort);
     return f.order === "desc" ? -c : c;
   });
 

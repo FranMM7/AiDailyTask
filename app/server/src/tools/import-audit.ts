@@ -1,3 +1,4 @@
+import { resolveDataRoot } from "../env";
 /**
  * One-time audit importer (idempotent, re-runnable).
  *
@@ -71,7 +72,8 @@ function parseArgs(argv: string[]): Args {
   let dryRun = false;
   let source =
     process.env.AiDailyTasks_AUDIT_SOURCE ??
-    process.env.AiDailyTaks_AUDIT_SOURCE ??
+    process.env.AiDailyTasks_AUDIT_SOURCE ??
+    process.env.AiDailyTaks_AUDIT_SOURCE ?? // legacy misspelling; keep for compatibility
     DEFAULT_SOURCE;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -128,7 +130,7 @@ function rewriteDocRefs(text: string, docNames: Set<string> | undefined): string
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  const root = resolveRoot();
+  const root = resolveDataRoot(resolveRoot());
   const boardDir = join(root, "board");
   const metaDir = join(boardDir, "_meta");
   const docsDir = dirname(args.source);
@@ -256,6 +258,8 @@ async function main(): Promise<void> {
       risk: t.risk,
       status: t.status,
       status_detail: t.statusDetail,
+      blocker: "", status_detail_updated_at: null, latest_note_at: null, priority: "Normal", next_action: null, communications: [],
+      blocked_since: null,
       ...(t.created ? { created: t.created } : {}),
       ...(t.updated ? { updated: t.updated } : {}),
       ...(t.status === "Completed" && t.completed ? { completed: t.completed } : {}),
@@ -270,6 +274,7 @@ async function main(): Promise<void> {
       parent: rel.parent.get(t.id) ?? null,
       children: rel.children.get(t.id) ?? [],
       sources: t.sources,
+      resources: [],
     };
     const body = buildBody({ summaryMd: t.summaryMd, scopeMd: t.scopeMd, migrationTs });
     const md = buildTaskMd(fm, body);

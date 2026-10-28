@@ -1,5 +1,15 @@
 import assert from "node:assert/strict";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { ConfigService } from "../config";
+import type { Env } from "../env";
+import { EventBus } from "../infrastructure/eventBus";
+import { AttachmentStore } from "../infrastructure/attachmentStore";
+import { FsTaskRepository } from "../infrastructure/taskRepository";
+import { RecentWrites } from "../infrastructure/recentWrites";
 import {
   getSection,
   parseBody,
@@ -31,6 +41,13 @@ relates_to: []
 parent: null
 children: []
 sources: []
+resources:
+  - id: monthly_query
+    title: Monthly query
+    kind: query
+    order: 0
+    language: sql
+    content: SELECT 1
 ---`;
 
 test("a '## QA' body section parses and surfaces as qaMarkdown", () => {
@@ -109,4 +126,64 @@ test("a full task file with QA survives serializeTaskFile -> parseTaskFile", () 
   const reparsed = parseTaskFile(raw);
   assert.ok(reparsed.ok);
   assert.equal(getSection(reparsed.parsed, "QA"), "Manual pass:\n\n- step one");
+});
+
+test("ordered task resources survive frontmatter serialization", () => {
+  const parsed = parseTaskFile(`${FM}\n\n## Summary\n\nS.\n`);
+  assert.ok(parsed.ok);
+  assert.equal(parsed.frontmatter.resources[0]?.title, "Monthly query");
+  const reparsed = parseTaskFile(serializeTaskFile(parsed.frontmatter, parsed.parsed));
+  assert.ok(reparsed.ok);
+  assert.deepEqual(reparsed.frontmatter.resources, parsed.frontmatter.resources);
+});
+
+test("recurring successor retains resource files but not ordinary attachments", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "aidailytasks-resources-"));
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..");
+  const env: Env = {
+    root,
+    boardDir: path.join(root, "board"),
+    exportsDir: path.join(root, "exports"),
+    graphsDir: path.join(root, "graphs"),
+    projectDocsDir: path.join(root, "project-docs"),
+    configPath: path.join(root, "board.config.json"),
+    configTemplatePath: path.join(repoRoot, "board.config.json.template"),
+    projectsPath: path.join(root, "projects.json"),
+    webDistDir: path.join(root, "dist"),
+    port: 0,
+    host: "127.0.0.1",
+    taskStore: "auto",
+  };
+
+  try {
+    await fs.mkdir(env.boardDir, { recursive: true });
+    const attachments = new AttachmentStore(env);
+    const resourceFiles = new AttachmentStore(env, "resources", "resources/files");
+    const repo = new FsTaskRepository(env, new ConfigService(env), attachments, resourceFiles, new EventBus(), new RecentWrites());
+    const source = await repo.create({
+      title: "Recurring close",
+      project: "Sample",
+      category: "Feature",
+      severity: "Medium",
+      risk: "Low",
+      status: "Completed",
+      status_detail: "", priority: "Normal", next_action: null, verification: "",
+      tags: [], skills: [], recurring: true,
+      depends_on: [], blocks: [], relates_to: [], parent: null,
+      resources: [{ id: "close_script", title: "Close script", kind: "script", order: 0, language: "powershell", content: "Write-Output close" }, { id: "guide", title: "Guide", kind: "file", order: 1, fileName: "guide.txt" }],
+      summary: "", scope: "", qa: "",
+    });
+    await attachments.save(source.id, "evidence.log", Buffer.from("one-off evidence"));
+    await resourceFiles.save(source.id, "guide.txt", Buffer.from("durable guide"));
+
+    const archived = await repo.setArchived(source.id, true, source.rev);
+    assert.equal(archived.conflict, false);
+    assert.ok(archived.successor);
+    assert.deepEqual(archived.successor.resources, source.resources);
+    assert.equal(archived.successor.attachments.length, 0);
+    assert.equal(archived.successor.resourceFiles.length, 1);
+    assert.equal(archived.successor.resourceFiles[0]?.name, "guide.txt");
+  } finally {
+    await fs.rm(root, { recursive: true, force: true });
+  }
 });

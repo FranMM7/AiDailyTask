@@ -5,9 +5,13 @@
  * `board.config.json`. It can be overridden with the AiDailyTasks_ROOT env var;
  * otherwise it is resolved three levels up from this file
  * (app/server/src -> app/server -> app -> <root>).
+ *
+ * AIDAILYTASKS_TASK_STORE selects the on-disk task format. See TaskStoreMode.
  */
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { readFileSync, statSync } from "node:fs";
+import { type TaskStoreMode, isTaskStoreMode } from "./infrastructure/taskFileStore";
 
 export interface Env {
   root: string;
@@ -15,12 +19,28 @@ export interface Env {
   exportsDir: string;
   graphsDir: string;
   projectDocsDir: string;
+  libraryDir?: string;
   configPath: string;
   configTemplatePath: string;
   projectsPath: string;
   webDistDir: string;
   port: number;
   host: string;
+  taskStore: TaskStoreMode;
+}
+
+/**
+ * Defaults to `auto`: read each task in whichever format it is stored in. An
+ * explicit `json` or `markdown` forces one format and is how a migration is
+ * committed to, or rolled back from.
+ */
+function resolveTaskStore(): TaskStoreMode {
+  const raw = (process.env.AIDAILYTASKS_TASK_STORE ?? "").trim().toLowerCase();
+  if (raw.length === 0) return "auto";
+  if (!isTaskStoreMode(raw)) {
+    throw new Error(`AIDAILYTASKS_TASK_STORE must be one of auto|markdown|json (got "${raw}")`);
+  }
+  return raw;
 }
 
 function resolveRoot(): string {
@@ -33,21 +53,48 @@ function resolveRoot(): string {
   return path.resolve(here, "..", "..", "..");
 }
 
+function checkedDataRoot(root: string, value: string): string {
+  const resolved = path.resolve(root, value);
+  if (!statSync(resolved).isDirectory()) throw new Error(`Data root is not a directory: ${resolved}`);
+  return resolved;
+}
+
+/** A machine-local pointer shared by HTTP, stdio and maintenance commands. */
+export function resolveDataRoot(root: string): string {
+  const override = process.env.AIDAILYTASKS_DATA_ROOT?.trim();
+  if (override) return checkedDataRoot(root, override);
+  let raw: string;
+  try {
+    raw = readFileSync(path.join(root, "storage.local.json"), "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return root;
+    throw error;
+  }
+  const settings = JSON.parse(raw) as { dataRoot?: unknown };
+  if (typeof settings?.dataRoot !== "string" || !settings.dataRoot.trim()) {
+    throw new Error("storage.local.json must contain a non-empty dataRoot path");
+  }
+  return checkedDataRoot(root, settings.dataRoot.trim());
+}
+
 export function loadEnv(): Env {
   const root = resolveRoot();
+  const dataRoot = resolveDataRoot(root);
   const portRaw = process.env.PORT;
   const port = portRaw && /^\d+$/.test(portRaw) ? Number(portRaw) : 4317;
   return {
     root,
-    boardDir: path.join(root, "board"),
-    exportsDir: path.join(root, "exports"),
-    graphsDir: path.join(root, "graphs"),
-    projectDocsDir: path.join(root, "project-docs"),
-    configPath: path.join(root, "board.config.json"),
+    boardDir: path.join(dataRoot, "board"),
+    exportsDir: path.join(dataRoot, "exports"),
+    graphsDir: path.join(dataRoot, "graphs"),
+    projectDocsDir: path.join(dataRoot, "project-docs"),
+    libraryDir: path.join(dataRoot, "board", "_meta", "resources"),
+    configPath: path.join(dataRoot, "board.config.json"),
     configTemplatePath: path.join(root, "board.config.json.template"),
-    projectsPath: path.join(root, "projects.json"),
+    projectsPath: path.join(dataRoot, "projects.json"),
     webDistDir: path.join(root, "app", "web", "dist"),
     port,
     host: "127.0.0.1",
+    taskStore: resolveTaskStore(),
   };
 }

@@ -63,7 +63,7 @@ function buildBlocks(info: McpInfo) {
     2,
   );
   const stdioConfig = JSON.stringify(
-    { mcpServers: { [name]: { command: info.stdio.command, args: info.stdio.args, cwd: info.stdio.cwd } } },
+    { mcpServers: { [name]: { command: info.stdio.command, args: info.stdio.args, cwd: info.stdio.cwd, env: info.stdio.env } } },
     null,
     2,
   );
@@ -126,6 +126,11 @@ export function McpConfigView() {
           />
         </Section>
 
+        <Section title="Safe task writes and reconnects" hint="Read the task first and keep its revision.">
+          <p className="text-sm">Use summary, scope, qa (User test script), and verification (Verification evidence). HTTP PATCH requires baseRev; MCP accepts omission for compatibility. On a conflict, reread and review before retrying.</p>
+          <p className="mt-2 text-sm">HTTP MCP requires initialize, notifications/initialized and the returned session ID. A 404 requires a new session. If health is good but tools are stale, reconnect the agent. Source-watch restarts invalidate sessions.</p>
+          <CodeBlock title="MCP read then write" code={'get_task({id: "C01"})\nupdate_task({id: "C01", baseRev: CURRENT_REV, status_detail: "Ready for review"})'} icon={<Terminal size={13}/>} />
+        </Section>
         <Section title="Available tools" hint="The same set over either transport.">
           <ul className="divide-y divide-slate-100 dark:divide-slate-800">
             {info.tools.map((t) => (

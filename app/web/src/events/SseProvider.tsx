@@ -2,6 +2,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { SseEvent, TaskSummaryOrInvalid } from "@AiDailyTasks/shared";
 import { useUiStore } from "@/store/ui";
+import { suppressOwnEcho } from "@/events/pendingTaskWrites";
 import type { TaskResponse, TasksResponse } from "@/api/hooks";
 
 const SSE_TYPES: SseEvent["type"][] = [
@@ -53,6 +54,7 @@ export function SseProvider({ children }: { children: ReactNode }) {
         case "hello":
           break;
         case "task.created": {
+          void qc.invalidateQueries({ queryKey: ["communications"] });
           const summary: TaskSummaryOrInvalid = evt.task;
           qc.setQueriesData<TasksResponse>({ queryKey: ["tasks"] }, (old) =>
             old && !old.tasks.some((t) => t.id === summary.id)
@@ -64,20 +66,28 @@ export function SseProvider({ children }: { children: ReactNode }) {
           break;
         }
         case "task.updated": {
-          // ignore our own echo: the cache already holds this rev
+          // Ignore our own echo: the cache already holds this rev.
           if (cachedRev(qc, evt.id) === evt.rev) break;
+          // The same echo, but arriving before the response that produced it had
+          // a chance to update the cache. Without this the board is re-read in
+          // full after every note the user adds. The mutation reconciles on
+          // settle if this turns out to have been someone else's write.
+          if (suppressOwnEcho(evt.id, evt.rev)) break;
+          void qc.invalidateQueries({ queryKey: ["communications"] });
           void qc.invalidateQueries({ queryKey: ["task", evt.id] });
           void qc.invalidateQueries({ queryKey: ["tasks"] });
           void qc.invalidateQueries({ queryKey: ["graph"] });
           break;
         }
         case "task.deleted": {
+          void qc.invalidateQueries({ queryKey: ["communications"] });
           qc.removeQueries({ queryKey: ["task", evt.id] });
           void qc.invalidateQueries({ queryKey: ["tasks"] });
           void qc.invalidateQueries({ queryKey: ["graph"] });
           break;
         }
         case "task.invalid": {
+          void qc.invalidateQueries({ queryKey: ["communications"] });
           void qc.invalidateQueries({ queryKey: ["task", evt.id] });
           void qc.invalidateQueries({ queryKey: ["tasks"] });
           break;

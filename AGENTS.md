@@ -20,7 +20,9 @@ put it in that task's body or a file under `board/<ID>/files/`).
 ## Data model (the source of truth is the files, not a database)
 
 ```
-board/<ID>/task.md      YAML frontmatter + markdown body
+board/<ID>/task.json    a task: frontmatter + body sections (structured store)
+board/<ID>/observations.jsonl  that task's observation log, one JSON record per line
+board/<ID>/task.md      legacy single-file form; still readable, no longer written
 board/<ID>/files/       that task's attachments (logs, screenshots, PDFs, scope docs)
 board/_meta/            overview, relationships narrative, runtime evidence, unfiled docs, import report
 exports/                generated markdown exports
@@ -37,7 +39,10 @@ project-docs/<project>/  agent instructions + imported README snapshots — LOCA
 `<ID>` is `C` + a zero-padded number (`C01`, `C09`, `C56`). The folder name is authoritative;
 frontmatter `id` must match it.
 
-### `task.md`
+### Task fields
+
+Shown below in the legacy `task.md` layout. The field names, values, and meanings are
+identical in `task.json` — only the container differs.
 
 ```yaml
 ---
@@ -77,16 +82,43 @@ Appended, newest last. Header format: `### <ISO8601Z> — <author>`, where `<aut
 or your own name (e.g. `claude`, `codex`).
 ```
 
+## MCP feature parity
+
+When adding task or board-data capabilities, expose compatible operations and fields
+through MCP as well as the UI/HTTP API. Verify HTTP and stdio transports and keep
+tool schemas, compact responses, descriptions, and the Connect tool list current.
+Browser-only navigation needs no MCP equivalent; agents use explicit task filters.
+Use `get_storage_info` to discover active paths before direct file access.
+
+## Current blockers and data location
+
+`blocker` holds detailed current blocking context as Markdown (empty means clear;
+up to 100,000 characters). Put the key reason first, then evidence, attempts, and
+what is needed to unblock. Compact `list_tasks` returns an excerpt and
+`blocker_truncated`; use `get_task` for the full text. `blocked_since`
+is the server-maintained UTC start timestamp (null when clear). Read these fields
+before resuming work. Use `update_task` to set or clear `blocker`: transitions append
+observations automatically, including start/end dates on resolution. Direct edits
+bypass lifecycle logging. A blocker does not change status or dependency relationships.
+
+Private data defaults to this repository. `storage.local.json` may point to a different
+`dataRoot`; `AIDAILYTASKS_DATA_ROOT` takes precedence. Resolve that location before
+reading or editing board/project data directly. Stop all writers before relocating,
+preserve the originals until verified, and restart/reconnect after changing the pointer.
+See README for the complete list of directories/files to copy.
+
 ## How to edit the board
 
 You edit these files **directly** with your normal file tools — the server (if running) watches the
 files and pushes changes to the browser live. Two common flows:
 
-- **Update a status / field:** edit the frontmatter of `board/<ID>/task.md`. Bump `updated:` to
-  today; set `completed:` when moving to Completed (clear it otherwise). Add a line under
-  `## Observations` describing what changed.
-- **Add a task:** create `board/<ID>/task.md` (next free number) with complete frontmatter + at least
-  a `## Summary`. Create `board/<ID>/files/` if you have attachments.
+- **Update a status / field:** prefer `update_task` over editing files. To edit by hand, change
+  `board/<ID>/task.json` — or `board/<ID>/task.md` for a task that has not been migrated. Bump
+  `updated:` to today; set `completed:` when moving to Completed. Record what changed as an
+  observation (`add_observation`, or append a line to `observations.jsonl` / `## Observations`).
+- **Add a task:** prefer `create_task`. By hand, create `board/<ID>/task.json` (next free number)
+  with complete frontmatter and at least a Summary section. Create `board/<ID>/files/` if you have
+  attachments.
 - **Read a task's attachments:** they're in `board/<ID>/files/` — open them directly instead of
   asking the human to paste logs/screenshots into chat.
 - **Keep relationships consistent:** if you add `depends_on: [C02]` to C05, also add `C05` to C02's
@@ -117,9 +149,46 @@ A completed recurring task creates exactly one active Backlog successor when arc
 application lifecycle. The successor retains content, tags, and skills; resets completion/archive,
 status detail, attachments, and task relationships; and records `recurrence_of` for idempotency.
 
+### Storage format
+
+A task is stored in one of two formats, and the app reads both:
+
+```
+board/<ID>/task.json           frontmatter + body sections          (structured — current)
+board/<ID>/observations.jsonl  one observation per line, appended   (structured — current)
+board/<ID>/task.md             frontmatter + body + ## Observations (legacy)
+```
+
+`AIDAILYTASKS_TASK_STORE` selects the behaviour:
+
+| Value | Meaning |
+| --- | --- |
+| `auto` (default) | Read each task in whichever format it is stored in, preferring `task.json`. New tasks are created as JSON once any task has been migrated. |
+| `json` | Structured only. A task with no `task.json` is not found. |
+| `markdown` | Legacy only. The rollback switch. |
+
+**When both files exist for a task, `task.json` is the source of truth and `task.md` is an
+ignored leftover from the conversion.** Editing that `task.md` changes nothing. Run
+`npm run migrate:structured -- remove-markdown --yes` to clear them out.
+
+Converting the board:
+
+```bash
+npm run migrate:structured -- status                        # what format is each task in?
+npm run migrate:structured -- convert --dry-run             # verify every task converts
+npm run migrate:structured -- convert                       # write task.json + observations.jsonl
+npm run migrate:structured -- remove-markdown --dry-run     # what would be deleted, and why not
+npm run migrate:structured -- remove-markdown --yes         # delete the legacy task.md files
+```
+
+`convert` never deletes anything, so after it the board is readable in both formats and the
+migration can be abandoned by deleting the JSON files. `remove-markdown` re-verifies each task
+and refuses to delete a `task.md` holding an observation that is not in `observations.jsonl`.
+
 ## Finding your way around
 
-- **List tasks:** glob `board/*/task.md`, then read. To search content, grep under `board/`.
+- **List tasks:** glob `board/*/task.json` (and `board/*/task.md` for tasks not yet migrated),
+  then read. To search content, grep under `board/`.
 - **Structured access (optional):** the app is also an MCP server (`npm run mcp`, or the HTTP
   endpoint at `http://127.0.0.1:4317/mcp`) exposing task CRUD, observations, attachment operations,
   project metadata/documentation, and task/code graphs. Prefer the machine-specific stdio config
@@ -179,3 +248,32 @@ Reusable project skills live under `.agents/skills/`. Use `orchestrate-board-wor
 briefings and the scope, work, verification, and completion stages. Use `approach-as-role` when a
 task should be handled through an engineer, full-stack, frontend, backend, QA, architecture, or
 security lens. Claude Code exposes matching slash commands under `.claude/commands/`.
+
+
+## Daily workflow and verification
+
+Read `status_freshness` and current blockers before resuming. Keep `status_detail` to one paragraph
+of at most 600 characters; replacements preserve full prior text in system history. Use
+`list_changes` with timezone-qualified boundaries and follow every `next_cursor` for activity
+summaries. Retrieve full observations by stable `observation_id` when excerpts are truncated;
+respect legacy/history-unavailable coverage and distinguish current from historical context.
+
+Classify new findings as verified/unverified/assumption. Verified notes require explicit evidence
+of the check, result and limits. Existing unclassified notes stay unclassified. User test steps
+belong in `qa` (User test script); actual results belong in observations and `verification`
+(Verification evidence). Writing evidence does not imply completion.
+
+Use `priority` for work ordering and `next_action` for an explicit action, owner and calendar due
+date. Communication tools record local facts; drafts are not sent, and only sent items marked
+awaiting_reply mean waiting on someone. No communication record authorizes an external send.
+Recurring successors retain priority/user steps and clear actions, communications and past results.
+
+Canonical HTTP/MCP content names are summary/scope/qa/verification; HTTP Markdown aliases remain
+compatible. HTTP PATCH requires baseRev; MCP accepts omission for compatibility, but agents should
+supply the read revision. A conflict requires a reread and review, never blind overwrite. MCP
+initialization remains stateful: reinitialize after 404, reconnect the host for stale tools when
+health is good. Source-watch restarts invalidate sessions.
+
+Use the preview/hash/apply migration flow for cancellation aliases; journals under task attachments
+support resume/rollback with revision guards. Direct file edits bypass this lifecycle and must not
+invent status timestamps or observation classifications.

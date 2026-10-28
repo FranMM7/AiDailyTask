@@ -13,6 +13,7 @@
  * labels ("Low–Med", "Med–High"), matching the source audit. Keep it exact.
  */
 import { z } from "zod";
+import { NextActionSchema, CommunicationSchema, ObservationMetadataSchema, VerificationSchema, CalendarDateSchema, type Freshness } from "./workflow";
 
 // ── Canonical vocabularies ─────────────────────────────────────────────────
 export const STATUSES = ["Backlog", "Not started", "Scoped", "In progress", "Completed"] as const;
@@ -43,6 +44,49 @@ export const STATUS_ORDER: Record<Status, number> = {
 
 export const ID_PATTERN = /^C\d+$/;
 
+export const RESOURCE_KINDS = ["instruction", "query", "script", "file"] as const;
+export const TaskResourceSchema = z
+  .object({
+    id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/),
+    title: z.string().trim().min(1).max(200),
+    kind: z.enum(RESOURCE_KINDS),
+    order: z.number().int().nonnegative(),
+    language: z.string().trim().max(50).optional(),
+    content: z.string().max(1_000_000).optional(),
+    fileName: z.string().trim().min(1).max(255).optional(),
+  })
+  .superRefine((resource, ctx) => {
+    if (resource.kind === "file" && !resource.fileName) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["fileName"], message: "File resources require fileName" });
+    }
+    if (resource.kind !== "file" && resource.content === undefined) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["content"], message: "Inline resources require content" });
+    }
+  });
+export type TaskResource = z.infer<typeof TaskResourceSchema>;
+
+/** A board-wide reusable resource. Its payload lives outside any task directory. */
+export const LibraryResourceSchema = z.object({
+  id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/),
+  title: z.string().trim().min(1).max(200),
+  kind: z.enum(RESOURCE_KINDS),
+  language: z.string().trim().max(50).optional(),
+  content: z.string().max(1_000_000).optional(),
+  fileName: z.string().trim().min(1).max(255).optional(),
+  purpose: z.string().trim().min(1).max(500),
+  tags: z.array(z.string().trim().min(1).max(50)).default([]),
+  created: z.string(),
+  updated: z.string(),
+}).superRefine((resource, ctx) => {
+  if (resource.kind === "file" && !resource.fileName) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["fileName"], message: "File resources require fileName" });
+  if (resource.kind !== "file" && resource.content === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["content"], message: "Inline resources require content" });
+});
+export type LibraryResource = z.infer<typeof LibraryResourceSchema>;
+export const CreateLibraryResourceSchema = z.object({
+  title: z.string().trim().min(1).max(200), kind: z.enum(RESOURCE_KINDS), language: z.string().trim().max(50).optional(), content: z.string().max(1_000_000).optional(), fileName: z.string().trim().min(1).max(255).optional(), purpose: z.string().trim().min(1).max(500), tags: z.array(z.string().trim().min(1).max(50)).default([]),
+}).superRefine((resource, ctx) => { if (resource.kind !== "file" && resource.content === undefined) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["content"], message: "Inline resources require content" }); });
+export type CreateLibraryResource = z.infer<typeof CreateLibraryResourceSchema>;
+
 // ── Frontmatter (persisted in each task.md) ─────────────────────────────────
 export const FrontmatterSchema = z.object({
   id: z.string().regex(ID_PATTERN),
@@ -53,6 +97,15 @@ export const FrontmatterSchema = z.object({
   risk: z.string().trim().min(1),
   status: z.string().trim().min(1),
   status_detail: z.string().default(""),
+  status_detail_updated_at: z.string().nullable().default(null),
+  status_detail_fingerprint: z.string().optional(),
+    observation_fingerprint: z.string().optional(),
+  latest_note_at: z.string().nullable().default(null),
+  priority: z.string().default("Normal"),
+  next_action: NextActionSchema.nullable().default(null),
+  communications: z.array(CommunicationSchema).default([]),
+  blocker: z.string().trim().max(100_000).default(""),
+  blocked_since: z.string().datetime().nullable().default(null),
   created: z.string().optional(),
   updated: z.string().optional(),
   completed: z.string().optional(),
@@ -73,6 +126,8 @@ export const FrontmatterSchema = z.object({
   parent: z.string().nullable().default(null),
   children: z.array(z.string()).default([]),
   sources: z.array(z.string()).default([]),
+  /** Ordered, reusable task references. Unlike attachments, these survive recurrence. */
+  resources: z.array(TaskResourceSchema).default([]),
 });
 export type Frontmatter = z.infer<typeof FrontmatterSchema>;
 
@@ -85,6 +140,9 @@ export const EditableFieldsSchema = FrontmatterSchema.pick({
   risk: true,
   status: true,
   status_detail: true,
+  priority: true,
+  next_action: true,
+  blocker: true,
   completed: true,
   tags: true,
   skills: true,
@@ -94,16 +152,25 @@ export const EditableFieldsSchema = FrontmatterSchema.pick({
   relates_to: true,
   parent: true,
   children: true,
-}).partial();
+  resources: true,
+}).partial().strict();
 export type EditableFields = z.infer<typeof EditableFieldsSchema>;
 
 // ── Sub-objects ─────────────────────────────────────────────────────────────
-export interface Observation {
+export interface Observation extends z.infer<typeof ObservationMetadataSchema> {
   /** ISO-8601 UTC timestamp, e.g. 2026-07-07T15:17:00Z */
   at: string;
   /** "human" | "claude" | free-form */
   author: string;
   markdown: string;
+}
+
+/** A bounded chronological slice of a task's observation history. */
+export interface ObservationPage {
+  observations: Observation[];
+  /** Opaque cursor for the next (older) page; null once the full history is loaded. */
+  nextCursor: string | null;
+  total: number;
 }
 
 export interface Attachment {
@@ -118,6 +185,8 @@ export interface Attachment {
 
 // ── API response DTOs ────────────────────────────────────────────────────────
 export interface TaskSummary extends Frontmatter {
+  status_freshness: Freshness;
+  communication_counts: { draft: number; awaiting_reply: number };
   /** concurrency token = file mtimeMs */
   rev: number;
   valid: true;
@@ -129,14 +198,27 @@ export interface TaskSummary extends Frontmatter {
 }
 
 export interface TaskDetail extends Frontmatter {
+  communication_page?: import("./workflow").CommunicationPage;
+  communication_counts: { draft: number; awaiting_reply: number };
+  status_freshness: Freshness;
+  summary: string; scope: string; qa: string; verification: string;
+  verificationMarkdown: string;
+  communication_count: number;
   rev: number;
   valid: true;
   summaryMarkdown: string;
   scopeMarkdown: string;
   /** "## QA" body section: how to test this task (manual steps, screenshots). Empty when the task has no QA notes. */
   qaMarkdown: string;
+  /** Most recent page of observations, ordered oldest to newest within the page. */
   observations: Observation[];
+  /** Total observations across the complete history, not merely this response page. */
+  observationCount: number;
+  /** Cursor for fetching older observations, or null when this response includes all of them. */
+  nextObservationCursor: string | null;
   attachments: Attachment[];
+  /** Physical files referenced by resources of kind=file. */
+  resourceFiles: Attachment[];
   rawBody: string;
   updatedEffective: string;
 }
@@ -155,7 +237,7 @@ export type TaskSummaryOrInvalid = TaskSummary | InvalidTask;
 export type TaskDetailOrInvalid = TaskDetail | InvalidTask;
 
 // ── API request DTOs ─────────────────────────────────────────────────────────
-export const PatchRequestSchema = z.object({
+export const PatchEnvelopeSchema = z.object({
   baseRev: z.number(),
   fields: EditableFieldsSchema.optional(),
   body: z
@@ -164,10 +246,12 @@ export const PatchRequestSchema = z.object({
       scope: z.string().optional(),
       /** "## QA" section: how to test this task. Empty string clears the section's content. */
       qa: z.string().optional(),
+      verification: z.string().optional(),
     })
     .optional(),
 });
-export type PatchRequest = z.infer<typeof PatchRequestSchema>;
+export type PatchRequest = z.infer<typeof PatchEnvelopeSchema>;
+export const PatchRequestSchema = z.unknown().transform(normalizePatch).pipe(PatchEnvelopeSchema);
 
 export const CreateRequestSchema = z.object({
   /** optional explicit id ("C99"); when omitted the server allocates max+1 */
@@ -179,6 +263,9 @@ export const CreateRequestSchema = z.object({
   risk: z.string().trim().min(1).default("Low"),
   status: z.string().trim().min(1).default("Not started"),
   status_detail: z.string().default(""),
+  priority: z.string().default("Normal"),
+  next_action: NextActionSchema.nullable().default(null),
+  blocker: z.string().trim().max(100_000).optional(),
   tags: z.array(z.string()).default([]),
   skills: z.array(z.string()).default([]),
   recurring: z.boolean().default(false),
@@ -186,9 +273,11 @@ export const CreateRequestSchema = z.object({
   blocks: z.array(z.string()).default([]),
   relates_to: z.array(z.string()).default([]),
   parent: z.string().nullable().default(null),
+  resources: z.array(TaskResourceSchema).default([]),
   summary: z.string().default(""),
   scope: z.string().default(""),
   qa: z.string().default(""),
+  verification: z.string().default(""),
 });
 export type CreateRequest = z.infer<typeof CreateRequestSchema>;
 
@@ -197,13 +286,22 @@ export const ObservationRequestSchema = z.object({
   author: z.string().default("human"),
   text: z.string().min(1),
   /** optional ISO timestamp; server stamps now() if omitted */
-  at: z.string().optional(),
+  at: z.string().datetime({offset:true}).optional(),
+  verification: VerificationSchema.optional(),
+  verification_evidence: z.string().max(100_000).optional(),
 });
 export type ObservationRequest = z.infer<typeof ObservationRequestSchema>;
 
 /** Query params for GET /tasks. Arrays may arrive as repeated query keys or CSV. */
 export const TaskFilterSchema = z.object({
   project: z.string().optional(),
+  priority: z.array(z.string()).optional(),
+  next_action_owner: z.string().optional(),
+  next_action_date_from: CalendarDateSchema.optional(),
+  next_action_date_to: CalendarDateSchema.optional(),
+  has_next_action: z.boolean().optional(),
+  action_undated: z.boolean().optional(),
+  include_closed: z.boolean().optional(),
   status: z.array(z.string().min(1)).optional(),
   category: z.array(z.string().min(1)).optional(),
   severity: z.array(z.string().min(1)).optional(),
@@ -216,7 +314,7 @@ export const TaskFilterSchema = z.object({
   /** Archived visibility: "exclude" (default, hide archived), "only" (Archive view), "include" (both). */
   archived: z.enum(["exclude", "only", "include"]).default("exclude"),
   sort: z
-    .enum(["id", "title", "status", "severity", "risk", "category", "updated", "created", "completed", "project"])
+    .enum(["id", "priority", "title", "status", "severity", "risk", "category", "updated", "created", "completed", "project"])
     .default("id"),
   order: z.enum(["asc", "desc"]).default("asc"),
 });
@@ -420,7 +518,7 @@ export interface McpInfo {
   /** Streamable-HTTP transport mounted on the running server. */
   http: { url: string };
   /** stdio transport an agent spawns locally. */
-  stdio: { command: string; args: string[]; cwd: string };
+  stdio: { command: string; args: string[]; cwd: string; env?: Record<string, string> };
   tools: McpToolInfo[];
 }
 
@@ -451,6 +549,8 @@ export interface BoardConfig {
   idPrefix: string;
   idPad: number;
   statuses: EnumDef[];
+  statusAliases?: Record<string, string>;
+  priorities?: EnumDef[];
   categories: EnumDef[];
   severities: EnumDef[];
   risks: EnumDef[];
@@ -505,4 +605,37 @@ export function idNum(id: string): number {
 export function normalizeId(id: string, prefix = "C", pad = 2): string {
   const n = idNum(id);
   return Number.isNaN(n) ? id : padId(n, prefix, pad);
+}
+
+/** Keep board cards and agent listings compact; get_task returns the full Markdown. */
+export function blockerExcerpt(markdown: string, max = 240): string {
+  const plain = markdown.replace(/[#*_`>]/g, "").replace(/\s+/g, " ").trim();
+  return plain.length > max ? plain.slice(0, max).trimEnd() + "..." : plain;
+}
+
+function normalizePatch(input: unknown, ctx: z.RefinementCtx) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) { ctx.addIssue({code:"custom",message:"Expected a task patch"}); return z.NEVER; }
+  const raw = input as Record<string, unknown>;
+  const fields: Record<string, unknown> = {};
+  const body: Record<string, unknown> = {};
+  const merge = (target: Record<string, unknown>, key: string, value: unknown) => {
+    if (key in target && JSON.stringify(target[key]) !== JSON.stringify(value)) ctx.addIssue({code:"custom",path:[key],message:"Conflicting aliases"});
+    target[key] = value;
+  };
+  const contentKeys = ["summary", "scope", "qa", "verification"];
+  const accept = (key: string, value: unknown, context: "flat" | "fields" | "body") => {
+    const canonical = key.endsWith("Markdown") ? key.slice(0,-8) : key;
+    if (context !== "fields" && contentKeys.includes(canonical)) merge(body,canonical,value);
+    else if (context !== "body" && key in EditableFieldsSchema.shape) merge(fields,key,value);
+    else ctx.addIssue({code:"custom",path:[key],message:"Unknown task field"});
+  };
+  for (const [key,value] of Object.entries(raw)) {
+    if (key === "baseRev") continue;
+    if (key === "fields" || key === "body") {
+      if (value === undefined) continue;
+      if (!value || typeof value !== "object" || Array.isArray(value)) {ctx.addIssue({code:"custom",path:[key],message:"Expected an object"});continue;}
+      for (const [k,v] of Object.entries(value)) accept(k,v,key);
+    } else accept(key,value,"flat");
+  }
+  return {baseRev:raw.baseRev,fields,body};
 }
